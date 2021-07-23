@@ -17,9 +17,11 @@ from .models import Agent, Algorithm, Parameter, ParameterValue
 import gym
 from gym import spaces
 
-sys.path.append(os.path.abspath(__file__ + '/../..'))
-sys.path.append(os.path.abspath(__file__ + '/../../stable-baselines3/'))
-sys.path.append(os.path.abspath(__file__ + '/../../stable-baselines3-contrib/'))
+sys.path.insert(0, os.path.abspath(__file__ + '/../..'))
+sys.path.insert(0, os.path.abspath(__file__ + '/../../stable-baselines3/'))
+sys.path.insert(0, os.path.abspath(__file__ + '/../../stable-baselines3-contrib/'))
+
+print(sys.path)
 
 import gym_envs
 

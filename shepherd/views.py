@@ -21,8 +21,6 @@ sys.path.insert(0, os.path.abspath(__file__ + '/../..'))
 sys.path.insert(0, os.path.abspath(__file__ + '/../../stable-baselines3/'))
 sys.path.insert(0, os.path.abspath(__file__ + '/../../stable-baselines3-contrib/'))
 
-print(sys.path)
-
 import gym_envs
 
 from stable_baselines3 import A2C, DDPG, DQN, HER, PPO, SAC, TD3
@@ -112,8 +110,10 @@ class ShepherdThread(threading.Thread):
         self.save_name = str(agent.owner) + '_' + agent.algo.name + '_' + str(agent.id)
         self.checkpoint_callback = CheckpointCallback(save_freq=1000, save_path='./logs_'+self.save_name+'/', name_prefix='rl_model'+'_'+str(self.known_agent_id))
         
-        self.learner = eval(agent.algo.name+'("MlpPolicy", env, verbose=1, **kwargs)', {}, {agent.algo.name: algorithms[agent.algo.name], "env": self.env, "kwargs": kwargs})
-        
+        # Instantiate the agent
+        algo = algorithms[agent.algo.name]
+
+        self.learner = algo(agent.policy, self.env, verbose=1, **kwargs)
 
     def updateAdvisorsList(self, advisors):
         for advisor in advisors:

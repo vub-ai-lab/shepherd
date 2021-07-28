@@ -98,7 +98,7 @@ class ShepherdThread(threading.Thread):
         self.q_actions = queue.Queue()
         self.advisors = []
         self.known_agent_id = known_agent_id
-        self.agent_id = agent.id # each agent has a bunch of threads that can be used as each other's advisors
+        self.agent_id = agent.id # each agent can have several executions/threads that can be used as each other's advisors
         self.cumulative_reward = 0.0
         self.env = gym.make("ShepherdEnv-v0", parent_thread = self, observation_space = observation_space, action_space = action_space)
         
@@ -167,8 +167,11 @@ def login_user(request):
     
     # Create a thread for the agent
     agent_thread = ShepherdThread(str_to_json(agent.observation_space), str_to_json(agent.action_space), agent, known_threads_id)
-    agent_thread.updateAdvisorsList(list(known_threads.values()))
+    
     known_threads[known_threads_id] = agent_thread
+    for thread in known_threads: # updates the new thread's advisors list, as well as other thread's advisors' lists with the new thread, if it has the same agent_id
+        thread.updateAdvisorsList(list(known_threads.values()))
+        
     request.session['known_thread_id'] = known_threads_id
     known_threads_id+=1
     

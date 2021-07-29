@@ -12,9 +12,11 @@ import numpy as np
 import ast
 import sys
 import glob
+import time
 import os
 from .models import Agent, Algorithm, Parameter, ParameterValue
 import gym
+import torch as th
 from gym import spaces
 
 sys.path.insert(0, os.path.abspath(__file__ + '/../..'))
@@ -27,11 +29,10 @@ from stable_baselines3 import A2C, DDPG, DQN, HER, PPO, SAC, TD3
 from sb3_contrib import BDPI
 from stable_baselines3.common.callbacks import CheckpointCallback
 
-known_threads = {}
-known_threads_id = 0
+ALL_THREADS = []
+THREAD_POOLS = {}
 
 algorithms = {'BDPI': BDPI, 'A2C': A2C, 'DDPG': DDPG, 'DQN': DQN, 'HER': HER, 'PPO': PPO, 'SAC': SAC, 'TD3': TD3}
-        
 
 def str_to_json(space):
     try:
@@ -70,17 +71,6 @@ def get_param_values_from_database(agent):
             
     return arguments
 
-def clean_up_logs(directory):
-    """
-    Remove old logs and leaves only the latest .zip log file of a RL model
-    """
-    logs = glob.glob(directory + '/*') # * means all if need specific format then *.csv
-    latest_log = max(logs, key=os.path.getctime)
-    logs.remove(latest_log)
-    for log in logs:
-        os.remove(log)
-
-
 def get_latest_log(directory):
     try:
         latest_log = max(glob.glob(directory + '/*'), key=os.path.getctime)
@@ -89,6 +79,48 @@ def get_latest_log(directory):
     
     return latest_log
 
+class AgentThreadPool:
+    """ List of ShepherdThread instances for a particular agent_id. Used to produce advice
+    """
+
+    def __init__(self):
+        self.threads = []
+
+    def add_thread(self, t):
+        """ Add a thread to the list of thread and set its last activity as now.
+        """
+        self.threads.append(t)
+
+        # Let the thread know that we are its pool
+        t.set_pool(self)
+
+    def cleanup_threads(self):
+        """ Explore the threads and remove those that have not seen any recent activity.
+        """
+        i = 0
+        current_time = time.monotonic()
+
+        while i < len(self.threads):
+            if (current_time - self.threads[i].last_activity_time) > 30*60:
+                # No activity since 30 minutes
+                del self.threads[i]
+            else:
+                i += 1
+
+    def get_advice(self, obs):
+        """ Ask all the threads to produce an advice vector for observation obs
+        """
+        if len(self.threads) > 0:
+            adviceact = 0.8
+            advices = [a.get_probas(obs).cpu() + 1 - adviceact for a in self.threads]
+            advices = th.stack(advices)
+            advice = th.mean(advices, axis=0)
+            advice /= advice.sum()
+        else:
+            advice = th.ones((self.action_space.n,))
+
+        return advice
+
 
 class ShepherdThread(threading.Thread):
     def __init__(self, observation_space, action_space, agent, known_agent_id):
@@ -96,10 +128,11 @@ class ShepherdThread(threading.Thread):
         
         self.q_obs = queue.Queue()
         self.q_actions = queue.Queue()
-        self.advisors = []
-        self.known_agent_id = known_agent_id
+
         self.agent_id = agent.id # each agent can have several executions/threads that can be used as each other's advisors
         self.cumulative_reward = 0.0
+        self.last_activity_time = time.monotonic()
+
         self.env = gym.make("ShepherdEnv-v0", parent_thread = self, observation_space = observation_space, action_space = action_space)
         
         # Get parameter values        
@@ -108,24 +141,23 @@ class ShepherdThread(threading.Thread):
 
         # Save a checkpoint every X steps
         self.save_name = str(agent.owner) + '_' + agent.algo.name + '_' + str(agent.id)
-        self.checkpoint_callback = CheckpointCallback(save_freq=1000, save_path='./logs_'+self.save_name+'/', name_prefix='rl_model'+'_'+str(self.known_agent_id))
+        self.checkpoint_callback = CheckpointCallback(save_freq=1000, save_path='./logs_'+self.save_name+'/', name_prefix='rl_model'+'_'+str(known_agent_id))
         
         # Instantiate the agent
         algo = algorithms[agent.algo.name]
 
         self.learner = algo(agent.policy, self.env, verbose=1, **kwargs)
 
-    def updateAdvisorsList(self, advisors):
-        for advisor in advisors:
-            if advisor not in self.advisors and advisor.agent_id == self.agent_id and advisor != self:
-                # a thread can only be advised by other threads with the same agent_id
-                self.advisors.append(advisor)
-                self.learner.add_advisor(advisor.learner)
-        for advisor in self.advisors:
-            if advisor not in advisors:
-                self.advisors.remove(advisor)
-                self.learner.remove_advisor(advisor.learner)
+    def get_probas(self, obs):
+        """ Ask the learner for action probabilities for observation <obs>
+        """
+        return self.learner.policy.get_probas(obs)
 
+    def set_pool(self, pool):
+        """ Inform the agent that it is part of a thread pool. It is used so that
+            the agent can obtain advice vectors.
+        """
+        self.learner.policy.advisory_thread_pool = pool
 
     def run(self):
         # Check if there is an already existing model to be loaded
@@ -133,6 +165,7 @@ class ShepherdThread(threading.Thread):
         if zip_file != None:
             print("LOADING")
             self.learner.load(zip_file)
+
         # Run the learner
         self.learner.learn(total_timesteps=1000000, callback = self.checkpoint_callback) # TODO while true instead of fixed number timesteps
         print('My thread died')
@@ -148,8 +181,7 @@ def action_to_json(a):
 
 @csrf_exempt 
 def login_user(request):
-    
-    global known_threads, known_threads_id, cumulative_reward
+    global ALL_THREADS, THREAD_POOLS
     
     data = json.loads(request.body) 
     
@@ -159,66 +191,67 @@ def login_user(request):
         login(request, user)
         agent = Agent.objects.get(owner=user, id=data['agent_id'])
     except AttributeError:
-        print("ERROR: Could not login user")
-        return JsonResponse({'ok': False}, safe=False)
+        return JsonResponse({'error': 'Cannot login user'}, safe=False)
     except Agent.DoesNotExist:
-        print("ERROR: Could not find agent in the user's agents")
-        return JsonResponse({'ok': False}, safe=False)
+        return JsonResponse({'error': 'The agent ID does not exist or does not belong to the user'}, safe=False)
     
+    # Create a pool for the agent_id if necessary
+    agent_id = agent.id
+
+    if agent_id not in THREAD_POOLS:
+        THREAD_POOLS[agent_id] = AgentThreadPool()
+
+    thread_pool = THREAD_POOLS[agent_id]
+
     # Create a thread for the agent
-    agent_thread = ShepherdThread(str_to_json(agent.observation_space), str_to_json(agent.action_space), agent, known_threads_id)
-    
-    known_threads[known_threads_id] = agent_thread
-    for thread in known_threads: # updates the new thread's advisors list, as well as other thread's advisors' lists with the new thread, if it has the same agent_id
-        thread.updateAdvisorsList(list(known_threads.values()))
-        
-    request.session['known_thread_id'] = known_threads_id
-    known_threads_id+=1
-    
+    thread_id = len(ALL_THREADS)
+
+    agent_thread = ShepherdThread(str_to_json(agent.observation_space), str_to_json(agent.action_space), agent, thread_id)
+
+    thread_pool.add_thread(agent_thread)
+    ALL_THREADS.append(agent_thread)
+
+    request.session['thread_id'] = thread_id
+    request.session['agent_id'] = agent_id
     agent_thread.start()
-        
+
     return JsonResponse({'ok': True}, safe=False)
 
 
 @csrf_exempt
 @login_required
 def env(request):
-    
-    global known_threads
+    global ALL_THREADS
     
     data = json.loads(request.body) 
     
     # Find the thread 
-    known_thread_id = request.session['known_thread_id']
+    thread_id = request.session['thread_id']
+    agent_id = request.session['agent_id']
+
     try:
-        thread = known_threads[known_thread_id]
-    
+        thread = ALL_THREADS[thread_id]
     except KeyError:
-        print("ERROR: Could not find thread in the current threads pool")
-        return None # TODO ???
+        return JsonResponse({'error': "Could not find thread in the current threads pool"})
     
-    # Update its individual advisors list if new advisors were recently added
-    thread.updateAdvisorsList(list(known_threads.values()))
-    print(str(thread.getName()), ' has ADVISORS ', thread.advisors)
-    
-    # Put the observation and reward into the agent
-    # if obs is None, the client wanst to end communication
-    if data['obs'] == None:
-        thread.q_obs.put(None)
-        del known_threads[known_thread_id] # TODO Not sure we need to ever delete them..?
-        return JsonResponse({'action': None}, safe=False)
-    
+    # Send the observation to the thread
     thread.q_obs.put((
        np.array(data['obs']), data['reward'], data['done'], data['info']
     ))
+
+    # Update the activity time of the thread, and cleanup stale threads
+    thread.last_activity_time = time.monotonic()
+
+    THREAD_POOLS[agent_id].cleanup_threads()
         
     # log rewards in out file to plot learning curves    
     thread.cumulative_reward += data['reward']
+
     if data['done']:
-        f = open('out-'+str(known_thread_id), 'a')
+        f = open('out-'+str(thread_id), 'a')
         print(thread.cumulative_reward, file=f)
         thread.cumulative_reward = 0.0
-        f.flush()
+        f.close()
 
     # The learner will have produced an action
     # if done=True, the episode has ended and the environment on the client side must be reset for a new episode to begin

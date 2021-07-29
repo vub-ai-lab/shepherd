@@ -394,7 +394,6 @@ class ActorCriticPolicy(BasePolicy):
         normalize_images: bool = True,
         optimizer_class: Type[th.optim.Optimizer] = th.optim.Adam,
         optimizer_kwargs: Optional[Dict[str, Any]] = None,
-        advisors = [],
     ):
 
         if optimizer_kwargs is None:
@@ -448,8 +447,6 @@ class ActorCriticPolicy(BasePolicy):
         self.action_dist = make_proba_distribution(action_space, use_sde=use_sde, dist_kwargs=dist_kwargs)
 
         self._build(lr_schedule)
-        
-        self._advisors = advisors
 
     def _get_constructor_parameters(self) -> Dict[str, Any]:
         data = super()._get_constructor_parameters()
@@ -559,7 +556,6 @@ class ActorCriticPolicy(BasePolicy):
     def forward(self, obs: th.Tensor, deterministic: bool = False) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
         """
         Forward pass in all the networks (actor and critic)
-        If there are advisors (other learners) available, compute the action probabilities based on the current state, and advice from external advisors.
 
         :param obs: Observation
         :param deterministic: Whether to sample or use deterministic actions
@@ -568,16 +564,8 @@ class ActorCriticPolicy(BasePolicy):
         latent_pi, latent_vf, latent_sde = self._get_latent(obs)
         values = self.value_net(latent_vf)
         
-        probas = self.get_probas(obs) # actor_probas
-
-        if len(self._advisors) > 0:
-            adviceact = 0.8
-            advices = [a.get_probas(obs).cpu() + 1 - adviceact for a in self._advisors]
-            advices = th.stack(advices)
-            advice = th.mean(advices, axis=0)
-            advice /= advice.sum()
-        else:
-            advice = th.ones((self.action_space.n,))
+        probas = self.get_probas(obs)   # actor_probas
+        advice = self.advisory_thread_pool.get_advice(obs)
             
         probas = probas * advice # intersection is by default the policy shaping formula
         probas = probas / probas.sum(-1, keepdim=True)
@@ -599,13 +587,6 @@ class ActorCriticPolicy(BasePolicy):
         latent_pi, latent_vf, latent_sde = self._get_latent(obs)
         distribution = self._get_action_dist_from_latent(latent_pi, latent_sde=latent_sde)
         return distribution.distribution.probs.flatten()
-    
-    def add_advisor(self, advisor) -> None:
-        self._advisors.append(advisor)
-    
-    def remove_advisor(self, advisor) -> None:
-        self._advisors.remove(advisor)
-        
 
     def _get_latent(self, obs: th.Tensor) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
         """

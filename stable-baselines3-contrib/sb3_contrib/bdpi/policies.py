@@ -148,8 +148,6 @@ class BDPIPolicy(BasePolicy):
         self.criticsB = nn.ModuleList()
         self.share_features_extractor = share_features_extractor
         self.n_critics = n_critics
-        
-        self.advisors = []
 
         self._build(lr_schedule)
 
@@ -198,12 +196,6 @@ class BDPIPolicy(BasePolicy):
     def make_critic(self, features_extractor: Optional[BaseFeaturesExtractor] = None) -> QNetwork:
         critic_kwargs = self._update_features_extractor(self.net_args, features_extractor)
         return QNetwork(**critic_kwargs).to(self.device)
-    
-    def add_advisor(self, advisor) -> None:
-        self.advisors.append(advisor)
-    
-    def remove_advisor(self, advisor) -> None:
-        self.advisors.remove(advisor)
         
     def get_probas(self, obs: th.Tensor) -> th.Tensor:
         return self.actor.forward(obs)
@@ -214,15 +206,7 @@ class BDPIPolicy(BasePolicy):
     def _predict(self, observation: th.Tensor, deterministic: bool = False) -> th.Tensor:
         
         probas = self.get_probas(observation)
-        
-        if len(self.advisors) > 0:
-            adviceact = 0.8
-            advices = [a.get_probas(observation).cpu() + 1 - adviceact for a in self.advisors]
-            advices = th.stack(advices)
-            advice = th.mean(advices, axis=0)
-            advice /= advice.sum()
-        else:
-            advice = th.ones((self.action_space.n,))
+        advice = self.advisory_thread_pool.get_advice(observation)
             
         probas = probas * advice # intersection is by default the policy shaping formula
         probas = probas / probas.sum(-1, keepdim=True)

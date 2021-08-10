@@ -14,7 +14,7 @@ import sys
 import glob
 import time
 import os
-from .models import Agent, Algorithm, Parameter, ParameterValue
+from .models import Agent, Algorithm, EpisodeReturn, Parameter, ParameterValue
 import gym
 import torch as th
 from gym import spaces
@@ -110,16 +110,21 @@ class AgentThreadPool:
     def get_advice(self, obs):
         """ Ask all the threads to produce an advice vector for observation obs
         """
-        if len(self.threads) > 0:
-            adviceact = 0.8
-            advices = [a.get_probas(obs).cpu() + 1 - adviceact for a in self.threads]
-            advices = th.stack(advices)
-            advice = th.mean(advices, axis=0)
-            advice /= advice.sum()
-        else:
-            advice = th.ones((self.action_space.n,))
+        with th.no_grad():
+            current_thread = threading.current_thread()
+            advice = th.ones_like(self.threads[0].get_probas(obs))
 
-        return advice
+            if len(self.threads) > 0:
+                adviceact = 0.8
+                advices = [a.get_probas(obs).cpu() + 1 - adviceact for a in self.threads if a != current_thread]
+
+                if len(advices) > 0:
+                    advices = th.stack(advices)
+                    advice = th.mean(advices, axis=0)
+
+            advice /= advice.sum()
+
+            return advice
 
 
 class ShepherdThread(threading.Thread):
@@ -129,7 +134,7 @@ class ShepherdThread(threading.Thread):
         self.q_obs = queue.Queue()
         self.q_actions = queue.Queue()
 
-        self.agent_id = agent.id # each agent can have several executions/threads that can be used as each other's advisors
+        self.agent = agent
         self.cumulative_reward = 0.0
         self.last_activity_time = time.monotonic()
 
@@ -167,7 +172,7 @@ class ShepherdThread(threading.Thread):
             self.learner.load(zip_file)
 
         # Run the learner
-        self.learner.learn(total_timesteps=1000000, callback = self.checkpoint_callback) # TODO while true instead of fixed number timesteps
+        self.learner.learn(total_timesteps=100000000, callback = self.checkpoint_callback) # TODO while true instead of fixed number timesteps
         print('My thread died')
         return None        
         
@@ -244,14 +249,17 @@ def env(request):
 
     THREAD_POOLS[agent_id].cleanup_threads()
         
-    # log rewards in out file to plot learning curves    
+    # log episode returns to plot learning curves
     thread.cumulative_reward += data['reward']
 
     if data['done']:
-        f = open('out-'+str(thread_id), 'a')
-        print(thread.cumulative_reward, file=f)
+        log_entry = EpisodeReturn()
+        log_entry.agent = thread.agent
+        log_entry.ret = thread.cumulative_reward
+        log_entry.save()
+
+        # Reset cumulative_reward for the next episode
         thread.cumulative_reward = 0.0
-        f.close()
 
     # The learner will have produced an action
     # if done=True, the episode has ended and the environment on the client side must be reset for a new episode to begin

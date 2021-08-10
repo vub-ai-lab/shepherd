@@ -22,8 +22,15 @@ class Agent(models.Model):
     observation_space = models.TextField('Observation space JSON')
     
     def __str__(self):
-        return ('(none)' if self.algo is None else self.algo.name) + ' agent of ' + self.owner.username
-    
+        return str(self.id) + ': ' + ('(none)' if self.algo is None else self.algo.name) + ' agent of ' + self.owner.username
+
+class EpisodeReturn(models.Model):
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, verbose_name="Agent")
+    datetime = models.DateTimeField(auto_now_add=True, verbose_name="Date-time of the episode")
+    ret = models.FloatField(verbose_name="Return obtained during that episode")
+
+    def __str__(self):
+        return str(self.agent) + " episode return " + str(self.ret)
 
 class Parameter(models.Model):
     class ParamType(models.IntegerChoices):

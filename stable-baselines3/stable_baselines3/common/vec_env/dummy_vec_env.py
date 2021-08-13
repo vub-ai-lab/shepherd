@@ -35,6 +35,9 @@ class DummyVecEnv(VecEnv):
         self.actions = None
         self.metadata = env.metadata
 
+    def get_advice(self, obs):
+        return self.envs[0].unwrapped.get_advice(obs)
+
     def step_async(self, actions: np.ndarray) -> None:
         self.actions = actions
 

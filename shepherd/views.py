@@ -28,6 +28,7 @@ import gym_envs
 from stable_baselines3 import A2C, DDPG, DQN, HER, PPO, SAC, TD3
 from sb3_contrib import BDPI
 from stable_baselines3.common.callbacks import CheckpointCallback
+from stable_baselines3.common.policies import avg_distributions
 
 ALL_THREADS = []
 THREAD_POOLS = {}
@@ -87,12 +88,9 @@ class AgentThreadPool:
         self.threads = []
 
     def add_thread(self, t):
-        """ Add a thread to the list of thread and set its last activity as now.
+        """ Add a thread to the list of threads
         """
         self.threads.append(t)
-
-        # Let the thread know that we are its pool
-        t.set_pool(self)
 
     def cleanup_threads(self):
         """ Explore the threads and remove those that have not seen any recent activity.
@@ -107,32 +105,29 @@ class AgentThreadPool:
             else:
                 i += 1
 
-    def get_advice(self, obs):
+    def get_advice(self, obs, current_thread):
         """ Ask all the threads to produce an advice vector for observation obs
         """
-        with th.no_grad():
-            current_thread = threading.current_thread()
-            advice = th.ones_like(self.threads[0].get_probas(obs))
+        action_space = self.threads[0].env.action_space
 
-            if len(self.threads) > 0:
-                adviceact = 0.8
-                advices = [a.get_probas(obs).cpu() + 1 - adviceact for a in self.threads if a != current_thread]
-
-                if len(advices) > 0:
-                    advices = th.stack(advices)
-                    advice = th.mean(advices, axis=0)
-
-            advice /= advice.sum()
-
-            return advice
+        if isinstance(action_space, spaces.Discrete):
+            if len(self.threads) > 1:
+                advice_distributions = [a.get_probas(obs).distribution for a in self.threads if a != current_thread]
+                return avg_distributions(advice_distributions)
+            else:
+                # No advisor (only one thread, ourselves). Return a null distribution
+                return th.distributions.categorical.Categorical(logits=th.ones(action_space.n,))
+        else:
+            raise NotImplementedError("Continuous-action environments are not supported by Shepherd yet")
 
 
 class ShepherdThread(threading.Thread):
-    def __init__(self, observation_space, action_space, agent, known_agent_id):
+    def __init__(self, observation_space, action_space, agent, known_agent_id, pool):
         super().__init__()
         
         self.q_obs = queue.Queue()
         self.q_actions = queue.Queue()
+        self.pool = pool
 
         self.agent = agent
         self.cumulative_reward = 0.0
@@ -158,11 +153,10 @@ class ShepherdThread(threading.Thread):
         """
         return self.learner.policy.get_probas(obs)
 
-    def set_pool(self, pool):
-        """ Inform the agent that it is part of a thread pool. It is used so that
-            the agent can obtain advice vectors.
+    def get_advice(self, obs):
+        """ Ask the threadpool for advice
         """
-        self.learner.policy.advisory_thread_pool = pool
+        return self.pool.get_advice(obs, self)
 
     def run(self):
         # Check if there is an already existing model to be loaded
@@ -211,7 +205,7 @@ def login_user(request):
     # Create a thread for the agent
     thread_id = len(ALL_THREADS)
 
-    agent_thread = ShepherdThread(str_to_json(agent.observation_space), str_to_json(agent.action_space), agent, thread_id)
+    agent_thread = ShepherdThread(str_to_json(agent.observation_space), str_to_json(agent.action_space), agent, thread_id, thread_pool)
 
     thread_pool.add_thread(agent_thread)
     ALL_THREADS.append(agent_thread)

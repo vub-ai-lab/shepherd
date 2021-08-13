@@ -32,6 +32,43 @@ from stable_baselines3.common.torch_layers import (
 from stable_baselines3.common.type_aliases import Schedule
 from stable_baselines3.common.utils import get_device, is_vectorized_observation, obs_as_tensor
 
+def consolidate_advices(advices):
+    """ Transform a list of Distribution objects to a single batched Distribution object
+    """
+    if isinstance(advices[0], th.distributions.categorical.Categorical):
+        probas = [a.probs.reshape(1, -1) for a in advices]
+        probas = th.cat(probas, 0)
+
+        return th.distributions.categorical.Categorical(probs=probas)
+    else:
+        raise NotImplementedError("Unsupported distribution type: " + repr(advices[0]))
+
+def mix_distributions(a, b):
+    """ Mix two distributions, computing their AND operation
+    """
+    assert(type(a) is type(b))
+
+    if isinstance(a, th.distributions.categorical.Categorical):
+        # Categorical distribution, element-wise product of probs
+        probas = a.probs * b.probs
+
+        return th.distributions.categorical.Categorical(probs=probas)
+    else:
+        raise NotImplementedError("Unsupported distribution type: " + repr(a))
+
+def avg_distributions(distributions):
+    """ Average all the distributions in <distributions>, computing their OR operation
+    """
+
+    if isinstance(distributions[0], th.distributions.categorical.Categorical):
+        # Average probas
+        all_probas = [d.probs for d in distributions]
+        probas = th.mean(th.stack(all_probas), 0)
+
+        return th.distributions.categorical.Categorical(probs=probas)
+    else:
+        raise NotImplementedError("Unsupported distribution type: " + repr(distributions[0]))
+
 
 class BaseModel(nn.Module, ABC):
     """
@@ -553,7 +590,7 @@ class ActorCriticPolicy(BasePolicy):
         self.optimizer = self.optimizer_class(self.parameters(), lr=lr_schedule(1), **self.optimizer_kwargs)
         
             
-    def forward(self, obs: th.Tensor, deterministic: bool = False) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
+    def forward(self, obs: th.Tensor, advice: th.distributions.distribution.Distribution, deterministic: bool = False) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
         """
         Forward pass in all the networks (actor and critic)
 
@@ -564,19 +601,20 @@ class ActorCriticPolicy(BasePolicy):
         latent_pi, latent_vf, latent_sde = self._get_latent(obs)
         values = self.value_net(latent_vf)
         
-        probas = self.get_probas(obs)   # actor_probas
-        advice = self.advisory_thread_pool.get_advice(obs)
-            
-        probas = probas * advice # intersection is by default the policy shaping formula
-        probas = probas / probas.sum(-1, keepdim=True)
-            
-        logits = probas.log()
-        distribution = self._get_action_dist_from_logits(logits)    
-        actions = distribution.get_actions(deterministic=deterministic)
+        actor_dist = self.get_probas(obs).distribution
+
+        # Mix actor_dist and advice
+        distribution = mix_distributions(actor_dist, advice)
+
+        # Sample from the mixed distribution
+        actions = distribution.sample() #distribution.get_actions(deterministic=deterministic)
         log_prob = distribution.log_prob(actions)
 
-        return actions, values, log_prob  
-        
+        return actions, values, log_prob
+
+    def _predict(self, *args, **kwargs):
+        actions, values, log_prob = self.forward(*args, **kwargs)
+        return actions
     
     def get_probas(self, obs: th.Tensor) -> th.Tensor:
         """
@@ -585,8 +623,7 @@ class ActorCriticPolicy(BasePolicy):
         :param obs: Observation
         """
         latent_pi, latent_vf, latent_sde = self._get_latent(obs)
-        distribution = self._get_action_dist_from_latent(latent_pi, latent_sde=latent_sde)
-        return distribution.distribution.probs.flatten()
+        return self._get_action_dist_from_latent(latent_pi, latent_sde=latent_sde)
 
     def _get_latent(self, obs: th.Tensor) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
         """
@@ -606,29 +643,6 @@ class ActorCriticPolicy(BasePolicy):
         if self.sde_features_extractor is not None:
             latent_sde = self.sde_features_extractor(features)
         return latent_pi, latent_vf, latent_sde
-    
-    
-    def _get_action_dist_from_logits(self, logits: th.Tensor) -> Distribution:
-        """
-        Retrieve action distribution given a probability distribution obtained by mixing policies.
-        """
-        logits = logits.unsqueeze(0)
-        
-        if isinstance(self.action_dist, DiagGaussianDistribution):
-            return self.action_dist.proba_distribution(logits, self.log_std)
-        elif isinstance(self.action_dist, CategoricalDistribution):
-            # Here mean_actions are the logits before the softmax
-            return self.action_dist.proba_distribution(action_logits=logits)
-        elif isinstance(self.action_dist, MultiCategoricalDistribution):
-            # Here mean_actions are the flattened logits
-            return self.action_dist.proba_distribution(action_logits=logits)
-        elif isinstance(self.action_dist, BernoulliDistribution):
-            # Here mean_actions are the logits (before rounding to get the binary actions)
-            return self.action_dist.proba_distribution(action_logits=logits)
-        elif isinstance(self.action_dist, StateDependentNoiseDistribution):
-            return self.action_dist.proba_distribution(logits, self.log_std, latent_sde)
-        else:
-            raise ValueError("Invalid action distribution")
 
     def _get_action_dist_from_latent(self, latent_pi: th.Tensor, latent_sde: Optional[th.Tensor] = None) -> Distribution:
         """
@@ -657,32 +671,30 @@ class ActorCriticPolicy(BasePolicy):
         else:
             raise ValueError("Invalid action distribution")
 
-    def _predict(self, observation: th.Tensor, deterministic: bool = False) -> th.Tensor:
-        """
-        Get the action according to the policy for a given observation.
-
-        :param observation:
-        :param deterministic: Whether to use stochastic or deterministic actions
-        :return: Taken action according to the policy
-        """
-        latent_pi, _, latent_sde = self._get_latent(observation)
-        distribution = self._get_action_dist_from_latent(latent_pi, latent_sde)
-        return distribution.get_actions(deterministic=deterministic)
-
-    def evaluate_actions(self, obs: th.Tensor, actions: th.Tensor) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
+    def evaluate_actions(self, obs: th.Tensor, actions: th.Tensor, advices: list) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
         """
         Evaluate actions according to the current policy,
         given the observations.
 
         :param obs:
         :param actions:
+        :param advices: list of Distribution instances, one per element in obs and actions.
         :return: estimated value, log likelihood of taking those actions
             and entropy of the action distribution.
         """
+        # Make unified distribution from the many distributions in advices (PyTorch distributions can be batched)
+        advice_dist = consolidate_advices(advices)
+
+        # TODO: Mix distribution and advice_dist
         latent_pi, latent_vf, latent_sde = self._get_latent(obs)
-        distribution = self._get_action_dist_from_latent(latent_pi, latent_sde)
+        distribution = self._get_action_dist_from_latent(latent_pi, latent_sde).distribution
+
+        distribution = mix_distributions(distribution, advice_dist)
+
+        # Query the mixed distribution for log_prob and entropy
         log_prob = distribution.log_prob(actions)
         values = self.value_net(latent_vf)
+        print(log_prob)
         return values, log_prob, distribution.entropy()
 
 

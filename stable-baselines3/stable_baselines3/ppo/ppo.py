@@ -162,15 +162,6 @@ class PPO(OnPolicyAlgorithm):
                 assert self.clip_range_vf > 0, "`clip_range_vf` must be positive, " "pass `None` to deactivate vf clipping"
 
             self.clip_range_vf = get_schedule_fn(self.clip_range_vf)
-            
-    def get_probas(self, obs: th.Tensor) -> th.Tensor:
-        return self.policy.get_probas(obs)
-    
-    def add_advisor(self, advisor) -> None: # advisor is a BaseAlgorithm
-        return self.policy.add_advisor(advisor)
-    
-    def remove_advisor(self, advisor) -> None: # advisor is a BaseAlgorithm
-        return self.policy.remove_advisor(advisor)
         
     def train(self) -> None:
         """
@@ -206,7 +197,7 @@ class PPO(OnPolicyAlgorithm):
                 if self.use_sde:
                     self.policy.reset_noise(self.batch_size)
 
-                values, log_prob, entropy = self.policy.evaluate_actions(rollout_data.observations, actions)
+                values, log_prob, entropy = self.policy.evaluate_actions(rollout_data.observations, actions, rollout_data.advices)
                 values = values.flatten()
                 # Normalize advantage
                 advantages = rollout_data.advantages

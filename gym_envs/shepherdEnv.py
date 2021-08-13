@@ -44,4 +44,11 @@ class ShepherdEnv(gym.Env):
     def step(self, action):
         self.parent_thread.q_actions.put(action)
         return self.parent_thread.q_obs.get()
-        
+
+    def get_advice(self, obs):
+        """ Return an advice torch.distributions.distribution.Distribution that
+            encodes advice that the environment can provide for <obs>. For
+            ShepherdEnv, self.parent_thread is asked for advice from the other
+            agents in the same environment.
+        """
+        return self.parent_thread.get_advice(obs)

@@ -120,7 +120,7 @@ class BaseBuffer(ABC):
         """
         raise NotImplementedError()
 
-    def to_torch(self, array: np.ndarray, copy: bool = True) -> th.Tensor:
+    def to_torch(self, array: Union[np.ndarray, list], copy: bool = True) -> th.Tensor:
         """
         Convert a numpy array to a PyTorch tensor.
         Note: it copies the data by default
@@ -130,9 +130,14 @@ class BaseBuffer(ABC):
             (may be useful to avoid changing things be reference)
         :return:
         """
-        if copy:
-            return th.tensor(array).to(self.device)
-        return th.as_tensor(array).to(self.device)
+        if isinstance(array, list):
+            if copy:
+                return array[:]
+            return array
+        else:
+            if copy:
+                return th.tensor(array).to(self.device)
+            return th.as_tensor(array).to(self.device)
 
     @staticmethod
     def _normalize_obs(
@@ -330,6 +335,7 @@ class RolloutBuffer(BaseBuffer):
         self.gamma = gamma
         self.observations, self.actions, self.rewards, self.advantages = None, None, None, None
         self.returns, self.episode_starts, self.values, self.log_probs = None, None, None, None
+        self.advices = None
         self.generator_ready = False
         self.reset()
 
@@ -343,6 +349,7 @@ class RolloutBuffer(BaseBuffer):
         self.values = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
         self.log_probs = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
         self.advantages = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
+        self.advices = []  # Simple list, as it will contain torch.Distribution instances, not just floats
         self.generator_ready = False
         super(RolloutBuffer, self).reset()
 
@@ -392,6 +399,7 @@ class RolloutBuffer(BaseBuffer):
         episode_start: np.ndarray,
         value: th.Tensor,
         log_prob: th.Tensor,
+        advice: th.distributions.distribution.Distribution
     ) -> None:
         """
         :param obs: Observation
@@ -418,6 +426,7 @@ class RolloutBuffer(BaseBuffer):
         self.episode_starts[self.pos] = np.array(episode_start).copy()
         self.values[self.pos] = value.clone().cpu().numpy().flatten()
         self.log_probs[self.pos] = log_prob.clone().cpu().numpy()
+        self.advices.append(advice)
         self.pos += 1
         if self.pos == self.buffer_size:
             self.full = True
@@ -458,6 +467,7 @@ class RolloutBuffer(BaseBuffer):
             self.log_probs[batch_inds].flatten(),
             self.advantages[batch_inds].flatten(),
             self.returns[batch_inds].flatten(),
+            [self.advices[i] for i in batch_inds],
         )
         return RolloutBufferSamples(*tuple(map(self.to_torch, data)))
 

@@ -3,6 +3,7 @@ from .models import *
 
 admin.site.register(Algorithm)
 admin.site.register(Agent)
+admin.site.register(APIKey)
 admin.site.register(EpisodeReturn)
 admin.site.register(Parameter)
 admin.site.register(ParameterValue)

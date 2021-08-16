@@ -14,7 +14,7 @@ import sys
 import glob
 import time
 import os
-from .models import Agent, Algorithm, EpisodeReturn, Parameter, ParameterValue
+from .models import *
 import gym
 import torch as th
 from gym import spaces
@@ -184,16 +184,15 @@ def login_user(request):
     global ALL_THREADS, THREAD_POOLS, LOCK
     
     data = json.loads(request.body) 
-    
-    # login and find the user's agent
-    user = authenticate(request, username=data['username'], password=data['user_password'])
+
+    # Look for an API key
     try:
-        login(request, user)
-        agent = Agent.objects.get(owner=user, id=data['agent_id'])
+        key = APIKey.objects.select_related('agent').get(key=data['apikey'])
+        agent = key.agent
     except AttributeError:
-        return JsonResponse({'error': 'Cannot login user'}, safe=False)
-    except Agent.DoesNotExist:
-        return JsonResponse({'error': 'The agent ID does not exist or does not belong to the user'}, safe=False)
+        return JsonResponse({'error': 'JSON query data must contain an apikey element'})
+    except APIKey.DoesNotExist:
+        return JsonResponse({'error': 'API Key not found in the database'})
     
     # Create a pool for the agent_id if necessary
     agent_id = agent.id
@@ -219,7 +218,6 @@ def login_user(request):
 
 
 @csrf_exempt
-@login_required
 def env(request):
     global ALL_THREADS
     

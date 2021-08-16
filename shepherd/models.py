@@ -1,7 +1,8 @@
 from django.db import models
 from django.contrib.auth.models import User
 
-# Create your models here.
+import uuid
+
 class Algorithm(models.Model):
     name = models.CharField("algorithm's name", max_length=32)
     can_continuous_actions = models.BooleanField("Compatible with continuous actions")
@@ -31,6 +32,18 @@ class EpisodeReturn(models.Model):
 
     def __str__(self):
         return str(self.agent) + " episode return " + str(self.ret)
+
+def make_api_key():
+    """ Generate a random API key using the UUID module. API keys look like "4bf9eeca-d1e6-45a2-997a-0d45273a8cd8"
+    """
+    return str(uuid.uuid4())
+
+class APIKey(models.Model):
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, verbose_name="Agent identified by this API key")
+    key = models.CharField("API Key string", max_length=36, default=make_api_key(), unique=True)
+
+    def __str__(self):
+        return self.key + " for agent " + str(self.agent)
 
 class Parameter(models.Model):
     class ParamType(models.IntegerChoices):

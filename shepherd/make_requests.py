@@ -17,19 +17,15 @@ def send_json_to_website(d, path):
     return r.json()
 
 # Make the environment on client side (here, gym env)
-env_name = 'CartPole-v1'
+env_name = 'LunarLander-v2'
 env = gym.make(env_name)
 obs = env.reset()
 
-# Client login info
-agent_id = int(sys.argv[1])
-username = "helene"
-user_password = "Chaussette23"
-
 # First communication: login user
-ok = send_json_to_website({'username': username, 'user_password': user_password, 'agent_id': agent_id}, 'shepherd/login_user/')
+ok = send_json_to_website({'apikey': '6921ac0b-3240-4a93-b85d-f8b1c7f71952'}, 'shepherd/login_user/')
+print(ok)
 
-if ok:
+if 'ok' in ok:
     print("Login successful")
     # Start sending observations, in exhange of actions with the agent on the server side
     action = send_json_to_website({'obs': obs.tolist(), 'reward': 0.0, 'done': False, 'info': {}}, 'shepherd/env/')

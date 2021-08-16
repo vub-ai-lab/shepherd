@@ -32,6 +32,7 @@ from stable_baselines3.common.policies import avg_distributions
 
 ALL_THREADS = []
 THREAD_POOLS = {}
+LOCK = threading.Lock()
 
 algorithms = {'BDPI': BDPI, 'A2C': A2C, 'DDPG': DDPG, 'DQN': DQN, 'HER': HER, 'PPO': PPO, 'SAC': SAC, 'TD3': TD3}
 
@@ -162,7 +163,7 @@ class ShepherdThread(threading.Thread):
         # Check if there is an already existing model to be loaded
         zip_file = get_latest_log('./logs_'+self.save_name+'/')
         if zip_file != None:
-            print("LOADING")
+            print("LOADING", zip_file)
             self.learner.load(zip_file)
 
         # Run the learner
@@ -180,7 +181,7 @@ def action_to_json(a):
 
 @csrf_exempt 
 def login_user(request):
-    global ALL_THREADS, THREAD_POOLS
+    global ALL_THREADS, THREAD_POOLS, LOCK
     
     data = json.loads(request.body) 
     
@@ -197,18 +198,18 @@ def login_user(request):
     # Create a pool for the agent_id if necessary
     agent_id = agent.id
 
-    if agent_id not in THREAD_POOLS:
-        THREAD_POOLS[agent_id] = AgentThreadPool()
+    with LOCK:
+        if agent_id not in THREAD_POOLS:
+            THREAD_POOLS[agent_id] = AgentThreadPool()
 
-    thread_pool = THREAD_POOLS[agent_id]
+        thread_pool = THREAD_POOLS[agent_id]
 
-    # Create a thread for the agent
-    thread_id = len(ALL_THREADS)
+        # Create a thread for the agent
+        thread_id = len(ALL_THREADS)
+        agent_thread = ShepherdThread(str_to_json(agent.observation_space), str_to_json(agent.action_space), agent, thread_id, thread_pool)
 
-    agent_thread = ShepherdThread(str_to_json(agent.observation_space), str_to_json(agent.action_space), agent, thread_id, thread_pool)
-
-    thread_pool.add_thread(agent_thread)
-    ALL_THREADS.append(agent_thread)
+        thread_pool.add_thread(agent_thread)
+        ALL_THREADS.append(agent_thread)
 
     request.session['thread_id'] = thread_id
     request.session['agent_id'] = agent_id

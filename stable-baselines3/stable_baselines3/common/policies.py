@@ -694,7 +694,6 @@ class ActorCriticPolicy(BasePolicy):
         # Query the mixed distribution for log_prob and entropy
         log_prob = distribution.log_prob(actions)
         values = self.value_net(latent_vf)
-        print(log_prob)
         return values, log_prob, distribution.entropy()
 
 

@@ -112,9 +112,17 @@ class AgentThreadPool:
         action_space = self.threads[0].env.action_space
 
         if isinstance(action_space, spaces.Discrete):
-            if len(self.threads) > 1:
-                advice_distributions = [a.get_probas(obs).distribution for a in self.threads if a != current_thread]
-                return avg_distributions(advice_distributions)
+            # Advice current_thread with every thread that has a last_activity_time
+            # later than the start_time of current_thread
+            threads = []
+
+            for t in self.threads:
+                if (t is not current_thread) and (t.last_activity_time > current_thread.start_time):
+                    threads.append(t)
+
+            if len(threads) > 1:
+                advice_distributions = [a.get_probas(obs).distribution for a in threads]
+                return avg_distributions(advice_distributions, adviceact=0.8)
             else:
                 # No advisor (only one thread, ourselves). Return a null distribution
                 return th.distributions.categorical.Categorical(logits=th.ones(action_space.n,))
@@ -132,6 +140,7 @@ class ShepherdThread(threading.Thread):
 
         self.agent = agent
         self.cumulative_reward = 0.0
+        self.start_time = time.monotonic()
         self.last_activity_time = time.monotonic()
 
         self.env = gym.make("ShepherdEnv-v0", parent_thread = self, observation_space = observation_space, action_space = action_space)

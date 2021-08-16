@@ -56,13 +56,13 @@ def mix_distributions(a, b):
     else:
         raise NotImplementedError("Unsupported distribution type: " + repr(a))
 
-def avg_distributions(distributions):
+def avg_distributions(distributions, adviceact):
     """ Average all the distributions in <distributions>, computing their OR operation
     """
 
     if isinstance(distributions[0], th.distributions.categorical.Categorical):
         # Average probas
-        all_probas = [d.probs for d in distributions]
+        all_probas = [d.probs + 1. - adviceact for d in distributions]
         probas = th.mean(th.stack(all_probas), 0)
 
         return th.distributions.categorical.Categorical(probs=probas)

@@ -27,19 +27,21 @@ print(ok)
 
 if 'ok' in ok:
     print("Login successful")
+    session_key = ok['session_key']
+
     # Start sending observations, in exhange of actions with the agent on the server side
-    action = send_json_to_website({'obs': obs.tolist(), 'reward': 0.0, 'done': False, 'info': {}}, 'shepherd/env/')
+    action = send_json_to_website({'obs': obs.tolist(), 'reward': 0.0, 'done': False, 'info': {}, 'session_key': session_key}, 'shepherd/env/')
 
     while True:
         print("ACTION ", action)
         obs, reward, done, info = env.step(action['action'])
-        action = send_json_to_website({'obs': obs.tolist(), 'reward': reward, 'done': done, 'info': {}}, 'shepherd/env/')
+        action = send_json_to_website({'obs': obs.tolist(), 'reward': reward, 'done': done, 'info': {}, 'session_key': session_key}, 'shepherd/env/')
         
         # End of an episode, beginning of a new one
         if action['action'] is None:
             assert(done)
             obs = env.reset()
-            action = send_json_to_website({'obs': obs.tolist(), 'reward': 0.0, 'done': False, 'info': {}}, 'shepherd/env/')
+            action = send_json_to_website({'obs': obs.tolist(), 'reward': 0.0, 'done': False, 'info': {}, 'session_key': session_key}, 'shepherd/env/')
 
     # When the client wants to stop, its last communication is to return None as observation
     action = send_json_to_website({'obs': None}, 'shepherd/env/')

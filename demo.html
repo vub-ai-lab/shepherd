@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Shepherd demo - find pralines!</title>
+        <meta charset="UTF-8">
+        <style>
+            body {
+                background: white;
+            }
+
+            #content {
+                width: 45em;
+                margin: auto;
+            }
+
+            h2 {
+                text-align: center;
+                font-size: 2.5em;
+                color: #003399;
+            }
+
+            #instruction {
+                font: 1.6em monospace;
+                color: #000000;
+            }
+
+            #outcomes {
+                font-size: 1.5em;
+            }
+
+            #outcomes div {
+                border: 1px solid #ff6600;
+                padding: 2em 0 2em 0;
+                margin: -1px 0 0 0;
+                text-align: center;
+            }
+
+            #msgCode {
+                color: red;
+                display: inline-block;
+                width: 8em;
+                margin-right: -8em;
+            }
+        </style>
+    </head>
+    <body><div id="content">
+        <h2>The Shepherd agent tells you</h2>
+
+        <p id="instruction">Connecting to Shepherd...</p>
+
+        <h2 id="outcome">Outcome</h2>
+
+        <div id="outcomes">
+            <div>
+                The instructions above are not applicable to where I am <br />
+                <input type="button" id="btnBadInstruction" value="Punish the agent">
+            </div>
+            <div>
+                I found a code: <br />
+                <input type="text" id="txtCode">
+                <input type="button" id="btnSubmitCode" value="Submit">
+                <span id="msgCode"></span>
+            </div>
+            <div>
+                I found pralines! <br />
+                <input type="button" id="btnFoundPralines" value="Tell the agent">
+            </div>
+        </div>
+
+
+
+        <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+        <script>
+            var URL = "http://127.0.0.1:5000/";
+            var APIKEY = "ae649044-b905-4fbf-ad97-258fbc5c4546";
+            var SESSION_KEY = "";
+            var STATE = "";
+
+            var tags = ["HP", "DS", "AN", "AS", "CS"];
+            var instructions = [
+                "Go to the demo stand left of this one",
+                "Go to the demo stand behind you",
+                "Look at the wall behind you",
+                "Go to the nearest coffee machine",
+                "Go upstairs"
+            ];
+
+            var num_states = tags.length + 1;       // The first state has no tag
+
+            /* Function to send a state, reward and done to Shepherd, and obtain an action in return */
+            /* The action is used to display instructions in p#instruction */
+            get_action = function(current_state, reward, done) {
+                // Encode the state
+                var state_index = tags.indexOf(current_state) + 1;      // Will return 0 for a non-existing tag
+
+                $.ajax({
+                    type: "POST",
+                    url: URL + "shepherd/env/",
+                    contentType: "text/plain",
+                    dataType: "json",
+                    data: JSON.stringify({"obs": state_index, "reward": reward, "done": done, "info": {}, "session_key": SESSION_KEY}),
+                    crossDomain: true
+                })
+                .done(function(data) {
+                    if (data['error']) {
+                        $("#instruction").text("Error getting an action: " + data["error"]);
+                    } else {
+                        // Get the instruction corresponding to the action
+                        if (data["action"] === null) {
+                            // Happens at the end of an episode
+                            $("#instruction").text("(no action returned)");
+                        } else {
+                            instruction = instructions[parseInt(data["action"])];
+                            $("#instruction").text(instruction);
+                        }
+                    }
+                });
+            };
+
+            /* Log in to Shepherd when the page is opened */
+            $(document).ready(function() {
+                $.ajax({
+                    type: "POST",
+                    url: URL + "shepherd/login_user/",
+                    contentType: "text/plain",
+                    dataType: "json",
+                    data: JSON.stringify({"apikey": APIKEY}),
+                    crossDomain: true
+                })
+                .done(function(data) {
+                    if (data['error']) {
+                        $("#instruction").text("Error connecting: " + data["error"]);
+                    } else {
+                        /* Ask Shepherd for the first action */
+                        SESSION_KEY = data['session_key'];
+                        STATE = "";
+                        get_action("", 0.0, false);
+                    }
+                });
+            });
+
+            /* When the instructions are unclear, punish the agent and get another instruction, the state has not changed */
+            $("#btnBadInstruction").click(function() {
+                get_action(STATE, -1.0, false);
+            });
+
+            /* When a tag is seen, send it to Shepherd as new state and get another instruction */
+            $("#btnSubmitCode").click(function() {
+                STATE = $("#txtCode").val();
+
+                if (tags.indexOf(STATE) === -1) {
+                    $("#msgCode").text("Invalid tag " + STATE);
+                    return;
+                } else {
+                    $("#msgCode").text("");
+                }
+
+                get_action(STATE, 0.0, false);
+            });
+
+            /* When pralines are found, reward the agent and finish the episode */
+            $("#btnFoundPralines").click(function() {
+                get_action(STATE, 5.0, true);
+                $("#outcome").text("You may now close or reload this page :-)");
+            });
+        </script>
+    </div></body>
+</html>

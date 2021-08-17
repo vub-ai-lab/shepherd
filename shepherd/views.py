@@ -187,6 +187,16 @@ def action_to_json(a):
     else:
         return int(a)
 
+def wrap_response(response):
+    """ This is what allows a Shepherd server to answer JSON queries from Javascript pages on different servers.
+    """
+    response["Access-Control-Allow-Origin"] = "https://steckdenis.be"
+    response["Access-Control-Allow-Credentials"] = "true"
+    response["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    response["Access-Control-Max-Age"] = "1000"
+    response["Access-Control-Allow-Headers"] = "X-Requested-With, Content-Type"
+
+    return response
 
 @csrf_exempt 
 def login_user(request):
@@ -199,9 +209,9 @@ def login_user(request):
         key = APIKey.objects.select_related('agent').get(key=data['apikey'])
         agent = key.agent
     except AttributeError:
-        return JsonResponse({'error': 'JSON query data must contain an apikey element'})
+        return wrap_response(JsonResponse({'error': 'JSON query data must contain an apikey element'}))
     except APIKey.DoesNotExist:
-        return JsonResponse({'error': 'API Key not found in the database'})
+        return wrap_response(JsonResponse({'error': 'API Key not found in the database'}))
     
     # Create a pool for the agent_id if necessary
     agent_id = agent.id
@@ -223,7 +233,9 @@ def login_user(request):
     request.session['agent_id'] = agent_id
     agent_thread.start()
 
-    return JsonResponse({'ok': True}, safe=False)
+    request.session.create()
+
+    return wrap_response(JsonResponse({'ok': True, 'session_key': request.session.session_key}))
 
 
 @csrf_exempt
@@ -231,15 +243,24 @@ def env(request):
     global ALL_THREADS
     
     data = json.loads(request.body) 
+
+    # Load the session from the session_key in the request
+    Store = type(request.session)
+
+    try:
+        session = Store(session_key=data['session_key'])
+    except:
+        raise
+        return wrap_response(JsonResponse({'error': "Unable to reload session, is session_key sent as JSON in the request?"}))
     
     # Find the thread 
-    thread_id = request.session['thread_id']
-    agent_id = request.session['agent_id']
+    thread_id = session['thread_id']
+    agent_id = session['agent_id']
 
     try:
         thread = ALL_THREADS[thread_id]
     except KeyError:
-        return JsonResponse({'error': "Could not find thread in the current threads pool"})
+        return wrap_response(JsonResponse({'error': "Could not find thread in the current threads pool"}))
     
     # Send the observation to the thread
     thread.q_obs.put((
@@ -269,9 +290,8 @@ def env(request):
         action = None
     else:
         action = action_to_json(thread.q_actions.get())
-        
 
-    return JsonResponse({'action': action}, safe=False)
+    return wrap_response(JsonResponse({'action': action}))
  
     
     

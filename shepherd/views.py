@@ -189,7 +189,7 @@ class ShepherdThread(threading.Thread):
 
         # Save a checkpoint every X steps
         self.save_name = str(agent.owner) + '_' + agent.algo.name + '_' + str(agent.id)
-        self.checkpoint_callback = CheckpointCallback(save_freq=1000, save_path='./logs_'+self.save_name+'/', name_prefix='rl_model'+'_'+str(thread_id))
+        self.checkpoint_callback = CheckpointCallback(save_freq=kwargs.get('save_freq', 1000), save_path='./logs_'+self.save_name+'/', name_prefix='rl_model'+'_'+str(thread_id))
         
         # Instantiate the agent
         algo = algorithms[agent.algo.name]

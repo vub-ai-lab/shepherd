@@ -26,14 +26,14 @@ sys.path.insert(0, os.path.abspath(__file__ + '/../../stable-baselines3-contrib/
 import gym_envs
 
 from stable_baselines3 import A2C, DDPG, DQN, HER, PPO, SAC, TD3
-from sb3_contrib import BDPI
+from sb3_contrib import BDPI, TabularBDPI
 from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.policies import avg_distributions
 
 THREAD_POOLS = {}
 LOCK = threading.Lock()
 
-algorithms = {'BDPI': BDPI, 'A2C': A2C, 'DDPG': DDPG, 'DQN': DQN, 'HER': HER, 'PPO': PPO, 'SAC': SAC, 'TD3': TD3}
+algorithms = {'BDPI': BDPI, 'TabularBDPI': TabularBDPI, 'A2C': A2C, 'DDPG': DDPG, 'DQN': DQN, 'HER': HER, 'PPO': PPO, 'SAC': SAC, 'TD3': TD3}
 
 def str_to_json(space):
     try:

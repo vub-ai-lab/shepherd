@@ -11,6 +11,7 @@ from stable_baselines3.common.torch_layers import (
     create_mlp,
 )
 from stable_baselines3.common.type_aliases import Schedule
+from stable_baselines3.common.policies import mix_distributions
 from stable_baselines3.dqn.policies import QNetwork
 from torch import nn
 
@@ -67,6 +68,11 @@ class Actor(BasePolicy):
             )
         )
         return data
+
+    def get_probas(self, obs: th.Tensor) -> th.distributions.distribution.Distribution:
+        probas = self.forward(obs)
+
+        return th.distributions.categorical.Categorical(probs=probas)
         
     def forward(self, obs: th.Tensor) -> th.Tensor:
         """Output of the neural network (here: probabilities)"""
@@ -74,14 +80,7 @@ class Actor(BasePolicy):
 
     def _predict(self, observation: th.Tensor, deterministic: bool = False) -> th.Tensor:
         """Action to be executed by the actor"""
-        probas = self.forward(observation)
-
-        if deterministic:
-            # Take the argmax
-            return th.max(probas, 1)[1].flatten()
-        else:
-            # Sample according to probabilities
-            return th.multinomial(probas, num_samples=1).flatten()
+        return self.get_probas(observation).sample()
 
 
 class BDPIPolicy(BasePolicy):
@@ -198,28 +197,21 @@ class BDPIPolicy(BasePolicy):
         return QNetwork(**critic_kwargs).to(self.device)
         
     def get_probas(self, obs: th.Tensor) -> th.Tensor:
-        return self.actor.forward(obs)
+        return self.actor.get_probas(obs)
 
-    def forward(self, obs: th.Tensor, deterministic: bool = False) -> th.Tensor:
-        return self._predict(obs, deterministic=deterministic)
-        
-    def _predict(self, observation: th.Tensor, deterministic: bool = False) -> th.Tensor:
-        
-        probas = self.get_probas(observation)
-        advice = self.advisory_thread_pool.get_advice(observation)
-            
-        probas = probas * advice # intersection is by default the policy shaping formula
-        probas = probas / probas.sum(-1, keepdim=True)
-            
-        if deterministic:
-            # Take the argmax
-            return th.max(probas, 1)[1].flatten()
-        else:
-            # Sample according to probabilities
-            return th.multinomial(probas, num_samples=1).flatten()
-        
+    def forward(self, obs: th.Tensor, advice: th.distributions.distribution.Distribution, deterministic: bool = False) -> th.Tensor:
+        actor_dist = self.get_probas(obs)
 
+        # Mix actor_dist and advice
+        distribution = mix_distributions(actor_dist, advice)
 
+        # Sample from the mixed distribution
+        actions = distribution.sample()
+
+        return actions
+
+    def _predict(self, *args, **kwargs):
+        return self.forward(*args, **kwargs)
 
 MlpPolicy = BDPIPolicy
 

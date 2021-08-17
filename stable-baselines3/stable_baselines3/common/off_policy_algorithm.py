@@ -399,15 +399,8 @@ class OffPolicyAlgorithm(BaseAlgorithm):
             and scaled action that will be stored in the replay buffer.
             The two differs when the action space is not normalized (bounds are not [-1, 1]).
         """
-        # Select action randomly or according to policy
-        if self.num_timesteps < learning_starts and not (self.use_sde and self.use_sde_at_warmup):
-            # Warmup phase
-            unscaled_action = np.array([self.action_space.sample()])
-        else:
-            # Note: when using continuous actions,
-            # we assume that the policy uses tanh to scale the action
-            # We use non-deterministic action in the case of SAC, for TD3, it does not matter
-            unscaled_action, _ = self.predict(self._last_obs, deterministic=False)
+        advice = self.env.get_advice(self._last_obs)
+        unscaled_action = self.policy.predict(self._last_obs, advice)[0]
 
         # Rescale the action from [low, high] to [-1, 1]
         if isinstance(self.action_space, gym.spaces.Box):
@@ -424,7 +417,8 @@ class OffPolicyAlgorithm(BaseAlgorithm):
             # Discrete case, no need to normalize or clip
             buffer_action = unscaled_action
             action = buffer_action
-        return action, buffer_action
+
+        return action, buffer_action, advice
 
     def _dump_logs(self) -> None:
         """
@@ -563,7 +557,8 @@ class OffPolicyAlgorithm(BaseAlgorithm):
                     self.actor.reset_noise()
 
                 # Select action randomly or according to policy
-                action, buffer_action = self._sample_action(learning_starts, action_noise)
+                action, buffer_action, advice = self._sample_action(learning_starts, action_noise)
+                # NOTE: advice is not used. We currently assume that off-policy algorithms don't need a learning correction.
 
                 # Rescale and perform action
                 step = env.step(action)

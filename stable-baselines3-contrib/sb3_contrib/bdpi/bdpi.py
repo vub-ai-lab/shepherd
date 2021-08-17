@@ -164,15 +164,6 @@ class BDPI(OffPolicyAlgorithm):
     def _excluded_save_params(self) -> List[str]:
         """Process pools cannot be pickled, so exclude "self.pool" from the saved parameters of BDPI."""
         return super()._excluded_save_params() + ["pool"]
-    
-    def get_probas(self, obs: th.Tensor) -> th.Tensor:
-        return self.policy.get_probas(obs).flatten()
-    
-    def add_advisor(self, advisor) -> None: # advisor is a BaseAlgorithm
-        self.policy.add_advisor(advisor)
-    
-    def remove_advisor(self, advisor) -> None: # advisor is a BaseAlgorithm
-        self.policy.remove_advisor(advisor)
 
     def train(self, gradient_steps: int, batch_size: int = 64) -> None:
         """BDPI Training procedure.
@@ -197,7 +188,6 @@ class BDPI(OffPolicyAlgorithm):
           the main process, that has to perform all the updates and predictions. The worker processes only
           fit neural networks.
         """
-
         # Update optimizers learning rate
         optimizers = [self.actor.optimizer] + [c.optimizer for c in self.criticsA] + [c.optimizer for c in self.criticsB]
         self._update_learning_rate(optimizers)
@@ -277,7 +267,6 @@ class BDPI(OffPolicyAlgorithm):
         eval_log_path: Optional[str] = None,
         reset_num_timesteps: bool = True,
     ) -> OffPolicyAlgorithm:
-
         return super(BDPI, self).learn(
             total_timesteps=total_timesteps,
             callback=callback,

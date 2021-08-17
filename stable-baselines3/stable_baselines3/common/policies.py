@@ -284,6 +284,7 @@ class BasePolicy(BaseModel):
     def predict(
         self,
         observation: Union[np.ndarray, Dict[str, np.ndarray]],
+        advice: np.ndarray,
         state: Optional[np.ndarray] = None,
         mask: Optional[np.ndarray] = None,
         deterministic: bool = False,
@@ -336,7 +337,8 @@ class BasePolicy(BaseModel):
         observation = obs_as_tensor(observation, self.device)
 
         with th.no_grad():
-            actions = self._predict(observation, deterministic=deterministic)
+            actions = self._predict(observation, advice, deterministic=deterministic)
+
         # Convert to numpy
         actions = actions.cpu().numpy()
 

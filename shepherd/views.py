@@ -30,7 +30,6 @@ from sb3_contrib import BDPI
 from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.policies import avg_distributions
 
-ALL_THREADS = []
 THREAD_POOLS = {}
 LOCK = threading.Lock()
 
@@ -85,8 +84,44 @@ class AgentThreadPool:
     """ List of ShepherdThread instances for a particular agent_id. Used to produce advice
     """
 
-    def __init__(self):
+    def __init__(self, observation_space, action_space, agent):
         self.threads = []
+        self.observation_space = observation_space
+        self.action_space = action_space
+        self.agent = agent
+
+    def allocate_thread(self):
+        """ Return a thread for a new episode. It is either an existing available
+            thread, or a new thread.
+        """
+        for t in self.threads:
+            if t.available:
+                t.available = False
+                return t
+
+        # Make a new thread, none of the existing ones was available
+        t = ShepherdThread(self.observation_space, self.action_space, self.agent, len(self.threads), self)
+        t.available = False
+        t.start()
+
+        self.threads.append(t)
+        return t
+
+    def get_thread_for_session(self, thread_id, session_key):
+        """ Get the thread for a session. It is threads[thread_id], except in the
+            case that this thread has already been re-used by another session, in
+            which case a new thread has to be allocated for this session.
+        """
+        current_thread = self.threads[thread_id]
+
+        if (current_thread.owner_session is not None) and (current_thread.owner_session != session_key):
+            # The thread has been given to another session, get another one
+            current_thread = self.allocate_thread()
+
+        current_thread.available = False
+        current_thread.owner_session = session_key
+
+        return current_thread
 
     def add_thread(self, t):
         """ Add a thread to the list of threads
@@ -131,12 +166,15 @@ class AgentThreadPool:
 
 
 class ShepherdThread(threading.Thread):
-    def __init__(self, observation_space, action_space, agent, known_agent_id, pool):
+    def __init__(self, observation_space, action_space, agent, thread_id, pool):
         super().__init__()
         
         self.q_obs = queue.Queue()
         self.q_actions = queue.Queue()
         self.pool = pool
+        self.available = True
+        self.thread_id = thread_id
+        self.owner_session = None
 
         self.agent = agent
         self.cumulative_reward = 0.0
@@ -151,12 +189,25 @@ class ShepherdThread(threading.Thread):
 
         # Save a checkpoint every X steps
         self.save_name = str(agent.owner) + '_' + agent.algo.name + '_' + str(agent.id)
-        self.checkpoint_callback = CheckpointCallback(save_freq=1000, save_path='./logs_'+self.save_name+'/', name_prefix='rl_model'+'_'+str(known_agent_id))
+        self.checkpoint_callback = CheckpointCallback(save_freq=1000, save_path='./logs_'+self.save_name+'/', name_prefix='rl_model'+'_'+str(thread_id))
         
         # Instantiate the agent
         algo = algorithms[agent.algo.name]
 
         self.learner = algo(agent.policy, self.env, verbose=1, **kwargs)
+
+    def finish_episode(self):
+        """ Finish an episode and make the thread available again.
+        """
+        log_entry = EpisodeReturn()
+        log_entry.agent = self.agent
+        log_entry.ret = self.cumulative_reward
+        log_entry.save()
+
+        # Reset cumulative_reward for the next episode
+        self.cumulative_reward = 0.0
+        self.available = True
+        self.owner_session = None
 
     def get_probas(self, obs):
         """ Ask the learner for action probabilities for observation <obs>
@@ -218,25 +269,20 @@ def login_user(request):
 
     with LOCK:
         if agent_id not in THREAD_POOLS:
-            THREAD_POOLS[agent_id] = AgentThreadPool()
+            THREAD_POOLS[agent_id] = AgentThreadPool(str_to_json(agent.observation_space), str_to_json(agent.action_space), agent)
 
         thread_pool = THREAD_POOLS[agent_id]
 
-        # Create a thread for the agent
-        thread_id = len(ALL_THREADS)
-        agent_thread = ShepherdThread(str_to_json(agent.observation_space), str_to_json(agent.action_space), agent, thread_id, thread_pool)
-
-        thread_pool.add_thread(agent_thread)
-        ALL_THREADS.append(agent_thread)
+        # Allocate a thread for the client
+        agent_thread = thread_pool.allocate_thread()
+        thread_id = agent_thread.thread_id
 
     request.session['thread_id'] = thread_id
     request.session['agent_id'] = agent_id
-    agent_thread.start()
 
     request.session.create()
 
     return wrap_response(JsonResponse({'ok': True, 'session_key': request.session.session_key}))
-
 
 @csrf_exempt
 def env(request):
@@ -250,7 +296,6 @@ def env(request):
     try:
         session = Store(session_key=data['session_key'])
     except:
-        raise
         return wrap_response(JsonResponse({'error': "Unable to reload session, is session_key sent as JSON in the request?"}))
     
     # Find the thread 
@@ -258,7 +303,13 @@ def env(request):
     agent_id = session['agent_id']
 
     try:
-        thread = ALL_THREADS[thread_id]
+        with LOCK:
+            pool = THREAD_POOLS[agent_id]
+            thread = pool.get_thread_for_session(thread_id, data['session_key'])
+            thread_id = thread.thread_id
+
+        session['thread_id'] = thread_id
+        session.save()
     except KeyError:
         return wrap_response(JsonResponse({'error': "Could not find thread in the current threads pool"}))
     
@@ -270,19 +321,14 @@ def env(request):
     # Update the activity time of the thread, and cleanup stale threads
     thread.last_activity_time = time.monotonic()
 
-    THREAD_POOLS[agent_id].cleanup_threads()
+    with LOCK:
+        pool.cleanup_threads()
         
     # log episode returns to plot learning curves
     thread.cumulative_reward += data['reward']
 
     if data['done']:
-        log_entry = EpisodeReturn()
-        log_entry.agent = thread.agent
-        log_entry.ret = thread.cumulative_reward
-        log_entry.save()
-
-        # Reset cumulative_reward for the next episode
-        thread.cumulative_reward = 0.0
+        thread.finish_episode()
 
     # The learner will have produced an action
     # if done=True, the episode has ended and the environment on the client side must be reset for a new episode to begin

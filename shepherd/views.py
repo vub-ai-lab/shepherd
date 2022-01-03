@@ -3,7 +3,7 @@ from django.contrib.auth.models import User # import the database classes
 from django.contrib.auth import authenticate, login
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import render
-from django.http import JsonResponse, HttpResponse
+from django.http import JsonResponse, HttpResponse, Http404
 import json
 
 import threading
@@ -19,6 +19,9 @@ from .models import *
 import gym
 import torch as th
 from gym import spaces
+
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 sys.path.insert(0, os.path.abspath(__file__ + '/../..'))
@@ -349,6 +352,15 @@ def send_curve(request):
     # Find agent 
     agent_id = request.GET['agent_id']
     
+    # Check that the agent belongs to the currently logged-in user
+    try:
+        agent = Agent.objects.get(id=agent_id)
+        
+        if agent.owner_id != request.user.id:
+            raise Http404("No such agent for this user")
+    except Agent.DoesNotExist:
+        raise Http404("Unknown agent")
+    
     # Select returns for the agent
     ep_returns = EpisodeReturn.objects.filter(agent_id=agent_id)
     returns = [] # actual floats
@@ -361,6 +373,9 @@ def send_curve(request):
     plot = plt.figure()
     
     plt.plot(returns)
+    plt.xlabel('Episode number')
+    plt.ylabel('Cumulative reward')
+    
     buf = io.BytesIO()
     plot.savefig(buf, format='svg')
     buf.seek(0)

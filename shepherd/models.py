@@ -1,4 +1,5 @@
 from django.db import models
+from django.utils.html import format_html
 from django.contrib.auth.models import User
 
 import uuid
@@ -21,6 +22,11 @@ class Agent(models.Model):
     policy = models.CharField("Policy class", max_length=32, choices=POLICIES)
     action_space = models.TextField('Action space JSON')
     observation_space = models.TextField('Observation space JSON')
+    
+    def learning_curve(self):
+        return format_html(
+            '<img src="/shepherd/send_curve/?agent_id=%i">' % self.id
+        )
     
     def __str__(self):
         return str(self.id) + ': ' + ('(none)' if self.algo is None else self.algo.name) + ' agent of ' + self.owner.username

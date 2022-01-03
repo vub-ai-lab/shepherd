@@ -8,3 +8,11 @@ Suggestions from Frederik
 
 - In Agent: add max_online_client (number of HTTP clients allowed at once for an agent, useful to limit RAM usage)
 - Per agent: add max_cpu_time_per_minute (or second), to limit the compute power used. We can also add max_timesteps_per_minute.
+
+
+serve file de django
+create file then delete after sending
+matplotlib passe les bytes
+
+des bytes avec un mimetype attaché qui dit que c'est un pdf ou svg ou png
+save fig de matplotlib file like, en python a une classe string buff

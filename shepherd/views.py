@@ -3,7 +3,7 @@ from django.contrib.auth.models import User # import the database classes
 from django.contrib.auth import authenticate, login
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import render
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponse
 import json
 
 import threading
@@ -13,11 +13,13 @@ import ast
 import sys
 import glob
 import time
+import io
 import os
 from .models import *
 import gym
 import torch as th
 from gym import spaces
+import matplotlib.pyplot as plt
 
 sys.path.insert(0, os.path.abspath(__file__ + '/../..'))
 sys.path.insert(0, os.path.abspath(__file__ + '/../../stable-baselines3/'))
@@ -208,6 +210,7 @@ class ShepherdThread(threading.Thread):
         self.cumulative_reward = 0.0
         self.available = True
         self.owner_session = None
+        
 
     def get_probas(self, obs):
         """ Ask the learner for action probabilities for observation <obs>
@@ -338,6 +341,30 @@ def env(request):
         action = action_to_json(thread.q_actions.get())
 
     return wrap_response(JsonResponse({'action': action}))
- 
+
+
+# http://localhost:5000/shepherd/send_curve/?agent_id=1 
+@login_required
+def send_curve(request):
+    # Find agent 
+    agent_id = request.GET['agent_id']
     
+    # Select returns for the agent
+    ep_returns = EpisodeReturn.objects.filter(agent_id=agent_id)
+    returns = [] # actual floats
+
+    for ret in ep_returns:
+        returns.append(ret.ret)
+        #print(ret.ret, ret.datetime)
     
+    # save plot in an in-memory file
+    plot = plt.figure()
+    
+    plt.plot(returns)
+    buf = io.BytesIO()
+    plot.savefig(buf, format='svg')
+    buf.seek(0)
+    plt.close(plot)
+    
+    return wrap_response(HttpResponse(buf, content_type="image/svg+xml"))
+

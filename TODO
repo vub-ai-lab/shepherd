@@ -1,0 +1,10 @@
+Suggestions from Xant:
+
+- Learning curves made with Matplotlib and served over HTTP. There must be a way to ask Matplotlib for the PDF "data" of the plot, and then Django has an HttpResponse object that can directly return that data to the client. If a "mimetype" is asked, it is "application/pdf". The mimetype tells the web browser what kind of file it is downloading (here, a PDF).
+- Note on the above: if generating a PDF is impossible, an SVG file works too. The mime type is "image/svg+xml"
+- Add a button in the admin to download the latest zip file of an agent. The Django documentation explains how to customize admin pages to add custom "fields". I'm pretty sure that an extra file that contains a link to a zip file is possible to have.
+
+Suggestions from Frederik
+
+- In Agent: add max_online_client (number of HTTP clients allowed at once for an agent, useful to limit RAM usage)
+- Per agent: add max_cpu_time_per_minute (or second), to limit the compute power used. We can also add max_timesteps_per_minute.

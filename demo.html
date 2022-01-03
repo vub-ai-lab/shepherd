@@ -146,7 +146,7 @@
 
             /* When a tag is seen, send it to Shepherd as new state and get another instruction */
             $("#btnSubmitCode").click(function() {
-                STATE = $("#txtCode").val();
+                STATE = $("#txtCode").val().toUpperCase();
 
                 if (tags.indexOf(STATE) === -1) {
                     $("#msgCode").text("Invalid tag " + STATE);

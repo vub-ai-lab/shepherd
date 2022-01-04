@@ -7,7 +7,7 @@ import uuid
 class Algorithm(models.Model):
     name = models.CharField("algorithm's name", max_length=32)
     can_continuous_actions = models.BooleanField("Compatible with continuous actions")
-    
+
     def __str__(self):
         return self.name
 
@@ -22,17 +22,17 @@ class Agent(models.Model):
     policy = models.CharField("Policy class", max_length=32, choices=POLICIES)
     action_space = models.TextField('Action space JSON')
     observation_space = models.TextField('Observation space JSON')
-    
+
     def learning_curve(self):
         return format_html(
-            '<img src="/shepherd/send_curve/?agent_id=%i">' % self.id
+            '<img src="/shepherd/send_curve/?agent_id=%s">' % self.id
         )
-    
+
     def latest_zip(self):
         return format_html(
-            '<a href="/shepherd/generate_zip/?agent_id=%i">Download ZIP (if it exists)</a>' % self.id
+            '<a href="/shepherd/generate_zip/?agent_id=%s">Download ZIP (if it exists)</a>' % self.id
         )
-    
+
     def __str__(self):
         return str(self.id) + ': ' + ('(none)' if self.algo is None else self.algo.name) + ' agent of ' + self.owner.username
 
@@ -62,11 +62,11 @@ class Parameter(models.Model):
         INT = 2
         FLOAT = 3
         STR = 4
-    
+
     name = models.CharField("name given to the parameter", max_length=32)
     algo = models.ForeignKey(Algorithm, on_delete=models.CASCADE, verbose_name="Algorithms that has this parameter")
     t = models.IntegerField(choices=ParamType.choices, verbose_name="Type of the parameter")
-    
+
     value_bool = models.BooleanField(null=True)
     value_int = models.IntegerField(null=True)
     value_float = models.FloatField(null=True)
@@ -82,6 +82,6 @@ class ParameterValue(models.Model):
     value_int = models.IntegerField(null=True)
     value_float = models.FloatField(null=True)
     value_str = models.CharField(max_length=64, null=True)
-    
+
     def __str__(self):
         return str(self.agent) + ' param ' + self.param.name + '=' + str(self.value_bool) + ' ' + str(self.value_int) + ' ' + str(self.value_float) + ' ' + self.value_str

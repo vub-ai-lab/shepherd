@@ -50,22 +50,22 @@ def str_to_json(space):
     else:
         print("ERROR, space is neither an int, nor a list of high and low")
         return None
-    
+
 def get_param_values_from_database(agent):
     """
     Retrieve parameter value for that agent, with that algorithm, either set by the user or the default value of the parameter
     """
     params = list(Parameter.objects.filter(algo=agent.algo))
     param_values = list(ParameterValue.objects.filter(agent=agent))
-    
+
     arguments = {}
-    
+
     for param in params:
         arguments[param.name] = param
         for i in range(len(param_values)):
             if param_values[i].param == param:
                 arguments[param.name] = param_values[i]
-            
+
         if param.t == 1:
             arguments[param.name] = arguments[param.name].value_bool
         elif param.t == 2:
@@ -74,7 +74,7 @@ def get_param_values_from_database(agent):
             arguments[param.name] = arguments[param.name].value_float
         else:
             arguments[param.name] = arguments[param.name].value_str
-            
+
     return arguments
 
 def get_latest_model(save_name):
@@ -84,9 +84,9 @@ def get_latest_model(save_name):
         latest_model = max(glob.glob(directory + '/*'), key=os.path.getctime)
     except ValueError:
         latest_log = None
-    
+
     return latest_model
-    
+
 class AgentThreadPool:
     """ List of ShepherdThread instances for a particular agent_id. Used to produce advice
     """
@@ -175,7 +175,7 @@ class AgentThreadPool:
 class ShepherdThread(threading.Thread):
     def __init__(self, observation_space, action_space, agent, thread_id, pool):
         super().__init__()
-        
+
         self.q_obs = queue.Queue()
         self.q_actions = queue.Queue()
         self.pool = pool
@@ -189,15 +189,15 @@ class ShepherdThread(threading.Thread):
         self.last_activity_time = time.monotonic()
 
         self.env = gym.make("ShepherdEnv-v0", parent_thread = self, observation_space = observation_space, action_space = action_space)
-        
-        # Get parameter values        
+
+        # Get parameter values
         kwargs = get_param_values_from_database(agent)
         print("KWARGS ", kwargs)
 
         # Save a checkpoint every X steps
         self.save_name = str(agent.owner) + '_' + agent.algo.name + '_' + str(agent.id)
         self.checkpoint_callback = CheckpointCallback(save_freq=kwargs.get('save_freq', 1000), save_path='./logs_'+self.save_name+'/', name_prefix='rl_model'+'_'+str(thread_id))
-        
+
         # Instantiate the agent
         algo = algorithms[agent.algo.name]
 
@@ -229,15 +229,20 @@ class ShepherdThread(threading.Thread):
     def run(self):
         # Check if there is an already existing model to be loaded
         model = get_latest_model(self.save_name)
-        if zip_file != None:
+
+        if model != None:
             print("LOADING", model)
-            self.learner.load(model)
+
+            try:
+                self.learner.load(model)
+            except:
+                print("Unable to load saved model, the agent's config may have changed in the database")
 
         # Run the learner
         self.learner.learn(total_timesteps=100000000, callback = self.checkpoint_callback) # TODO while true instead of fixed number timesteps
         print('My thread died')
-        return None        
-        
+        return None
+
 
 def action_to_json(a):
     if isinstance(a, np.ndarray):
@@ -256,11 +261,11 @@ def wrap_response(response):
 
     return response
 
-@csrf_exempt 
+@csrf_exempt
 def login_user(request):
     global ALL_THREADS, THREAD_POOLS, LOCK
-    
-    data = json.loads(request.body) 
+
+    data = json.loads(request.body)
 
     # Look for an API key
     try:
@@ -270,7 +275,7 @@ def login_user(request):
         return wrap_response(JsonResponse({'error': 'JSON query data must contain an apikey element'}))
     except APIKey.DoesNotExist:
         return wrap_response(JsonResponse({'error': 'API Key not found in the database'}))
-    
+
     # Create a pool for the agent_id if necessary
     agent_id = agent.id
 
@@ -294,8 +299,8 @@ def login_user(request):
 @csrf_exempt
 def env(request):
     global ALL_THREADS
-    
-    data = json.loads(request.body) 
+
+    data = json.loads(request.body)
 
     # Load the session from the session_key in the request
     Store = type(request.session)
@@ -304,8 +309,8 @@ def env(request):
         session = Store(session_key=data['session_key'])
     except:
         return wrap_response(JsonResponse({'error': "Unable to reload session, is session_key sent as JSON in the request?"}))
-    
-    # Find the thread 
+
+    # Find the thread
     thread_id = session['thread_id']
     agent_id = session['agent_id']
 
@@ -319,7 +324,7 @@ def env(request):
         session.save()
     except KeyError:
         return wrap_response(JsonResponse({'error': "Could not find thread in the current threads pool"}))
-    
+
     # Send the observation to the thread
     thread.q_obs.put((
        np.array(data['obs']), data['reward'], data['done'], data['info']
@@ -330,7 +335,7 @@ def env(request):
 
     with LOCK:
         pool.cleanup_threads()
-        
+
     # log episode returns to plot learning curves
     thread.cumulative_reward += data['reward']
 
@@ -347,21 +352,21 @@ def env(request):
     return wrap_response(JsonResponse({'action': action}))
 
 
-# http://localhost:5000/shepherd/send_curve/?agent_id=1 
+# http://localhost:5000/shepherd/send_curve/?agent_id=1
 @login_required
 def send_curve(request):
-    # Find agent 
+    # Find agent
     agent_id = request.GET['agent_id']
-    
+
     # Check that the agent belongs to the currently logged-in user
     try:
         agent = Agent.objects.get(id=agent_id)
-        
-        if agent.owner_id != request.user.id:
+
+        if agent.owner_id != request.user.id and not request.user.is_superuser:
             raise Http404("No such agent for this user")
     except Agent.DoesNotExist:
         raise Http404("Unknown agent")
-    
+
     # Select returns for the agent
     ep_returns = EpisodeReturn.objects.filter(agent_id=agent_id)
     returns = [] # actual floats
@@ -369,42 +374,42 @@ def send_curve(request):
     for ret in ep_returns:
         returns.append(ret.ret)
         #print(ret.ret, ret.datetime)
-    
+
     # save plot in an in-memory file
     plot = plt.figure()
-    
+
     plt.plot(returns)
     plt.xlabel('Episode number')
     plt.ylabel('Cumulative reward')
-    
+
     buf = io.BytesIO()
     plot.savefig(buf, format='svg')
     buf.seek(0)
     plt.close(plot)
-    
+
     return wrap_response(HttpResponse(buf, content_type="image/svg+xml"))
 
 @login_required
 def generate_zip(request):
-    # Find agent 
+    # Find agent
     agent_id = request.GET['agent_id']
-    
+
     # Check that the agent belongs LOCKto the currently logged-in user
     try:
         agent = Agent.objects.get(id=agent_id)
-        
-        if agent.owner_id != request.user.id:
+
+        if agent.owner_id != request.user.id and not request.user.is_superuser:
             raise Http404("No such agent for this user")
     except Agent.DoesNotExist:
         raise Http404("Unknown agent")
-    
+
     # Directory where the zip file is
     savename = str(agent.owner) + '_' + agent.algo.name + '_' + str(agent.id)
     zipname = get_latest_model(savename)
-    
+
     if zipname is None:
         raise Http404("No log yet for this agent")
-    
+
     # Return the zip data
     with open(zipname, 'rb') as f:
         return HttpResponse(f, headers={'Content-Type': 'application/zip', 'Content-Disposition': 'attachment; filename="' + savename + '.zip"'})

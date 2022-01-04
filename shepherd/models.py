@@ -1,5 +1,5 @@
 from django.db import models
-from django.utils.html import format_html
+from django.utils.html import format_html, mark_safe
 from django.contrib.auth.models import User
 
 import uuid
@@ -24,9 +24,22 @@ class Agent(models.Model):
     observation_space = models.TextField('Observation space JSON')
 
     def learning_curve(self):
-        return format_html(
-            '<img src="/shepherd/send_curve/?agent_id=%s">' % self.id
-        )
+        img_tag = '<img id=\"learning_curve\" src="/shepherd/send_curve/?agent_id=%s&">' % self.id
+        refresh = """
+<script>
+window.onload = function() {
+    var image = document.getElementById("learning_curve");
+
+    function updateImage() {
+        image.src = image.src.split("&")[0] + "&" + new Date().getTime();
+    }
+
+    setInterval(updateImage, 1000);
+}
+</script>
+"""
+
+        return mark_safe(img_tag + refresh)
 
     def latest_zip(self):
         return format_html(

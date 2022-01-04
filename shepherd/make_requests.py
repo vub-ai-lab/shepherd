@@ -13,7 +13,7 @@ SESSION = requests.Session()
 def send_json_to_website(d, path):
     """ Sends "d", a dictionary, to the website, and returns the response as a Python dictionary
     """
-    r = SESSION.post('http://localhost:5000/'+ path, json=d)
+    r = SESSION.post('http://localhost:8000/'+ path, json=d)
     return r.json()
 
 # Make the environment on client side (here, gym env)
@@ -22,7 +22,7 @@ env = gym.make(env_name)
 obs = env.reset()
 
 # First communication: login user
-ok = send_json_to_website({'apikey': '6921ac0b-3240-4a93-b85d-f8b1c7f71952'}, 'shepherd/login_user/')
+ok = send_json_to_website({'apikey': 'daaa8020-9cb6-4d4a-be0f-00350360e578'}, 'shepherd/login_user/')
 print(ok)
 
 if 'ok' in ok:

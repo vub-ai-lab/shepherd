@@ -77,14 +77,16 @@ def get_param_values_from_database(agent):
             
     return arguments
 
-def get_latest_log(directory):
+def get_latest_model(save_name):
+    directory = './logs_'+save_name+'/'
+    latest_model = None
     try:
-        latest_log = max(glob.glob(directory + '/*'), key=os.path.getctime)
+        latest_model = max(glob.glob(directory + '/*'), key=os.path.getctime)
     except ValueError:
         latest_log = None
     
-    return latest_log
-
+    return latest_model
+    
 class AgentThreadPool:
     """ List of ShepherdThread instances for a particular agent_id. Used to produce advice
     """
@@ -213,7 +215,6 @@ class ShepherdThread(threading.Thread):
         self.cumulative_reward = 0.0
         self.available = True
         self.owner_session = None
-        
 
     def get_probas(self, obs):
         """ Ask the learner for action probabilities for observation <obs>
@@ -227,10 +228,10 @@ class ShepherdThread(threading.Thread):
 
     def run(self):
         # Check if there is an already existing model to be loaded
-        zip_file = get_latest_log('./logs_'+self.save_name+'/')
+        model = get_latest_model(self.save_name)
         if zip_file != None:
-            print("LOADING", zip_file)
-            self.learner.load(zip_file)
+            print("LOADING", model)
+            self.learner.load(model)
 
         # Run the learner
         self.learner.learn(total_timesteps=100000000, callback = self.checkpoint_callback) # TODO while true instead of fixed number timesteps
@@ -382,4 +383,32 @@ def send_curve(request):
     plt.close(plot)
     
     return wrap_response(HttpResponse(buf, content_type="image/svg+xml"))
+
+@login_required
+def generate_zip(request):
+    # Find agent 
+    agent_id = request.GET['agent_id']
+    
+    # Check that the agent belongs LOCKto the currently logged-in user
+    try:
+        agent = Agent.objects.get(id=agent_id)
+        
+        if agent.owner_id != request.user.id:
+            raise Http404("No such agent for this user")
+    except Agent.DoesNotExist:
+        raise Http404("Unknown agent")
+    
+    # Directory where the zip file is
+    savename = str(agent.owner) + '_' + agent.algo.name + '_' + str(agent.id)
+    zipname = get_latest_model(savename)
+    
+    if zipname is None:
+        raise Http404("No log yet for this agent")
+    
+    # Return the zip data
+    with open(zipname, 'rb') as f:
+        return HttpResponse(f, headers={'Content-Type': 'application/zip', 'Content-Disposition': 'attachment; filename="' + savename + '.zip"'})
+
+
+
 

@@ -28,6 +28,11 @@ class Agent(models.Model):
             '<img src="/shepherd/send_curve/?agent_id=%i">' % self.id
         )
     
+    def latest_zip(self):
+        return format_html(
+            '<a href="/shepherd/generate_zip/?agent_id=%i">Download ZIP (if it exists)</a>' % self.id
+        )
+    
     def __str__(self):
         return str(self.id) + ': ' + ('(none)' if self.algo is None else self.algo.name) + ' agent of ' + self.owner.username
 

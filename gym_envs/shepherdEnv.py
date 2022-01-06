@@ -5,7 +5,7 @@ import queue
 import random
 import sys
 import numpy as np
-
+import time
 
 def json_to_space(j):
     if isinstance(j, int):
@@ -35,6 +35,7 @@ class ShepherdEnv(gym.Env):
         self.parent_thread = parent_thread
         self.observation_space = json_to_space(observation_space)
         self.action_space = json_to_space(action_space)
+        self.time_when_i_got_an_observation = time.monotonic()
                
     def reset(self):
         """ Reset the environment and return the initial state number
@@ -42,8 +43,17 @@ class ShepherdEnv(gym.Env):
         return self.parent_thread.q_obs.get()[0]
         
     def step(self, action):
+        now = time.monotonic()
+        time_the_agent_spent_choosing_an_action = now - self.time_when_i_got_an_observation
+        
+        self.parent_thread.time_spent_in_agent += time_the_agent_spent_choosing_an_action
+        
         self.parent_thread.q_actions.put(action)
-        return self.parent_thread.q_obs.get()
+        rs = self.parent_thread.q_obs.get()
+        
+        self.time_when_i_got_an_observation = time.monotonic()
+        
+        return rs
 
     def get_advice(self, obs):
         """ Return an advice torch.distributions.distribution.Distribution that

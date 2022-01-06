@@ -8,6 +8,7 @@ import json
 
 import threading
 import queue
+import psutil
 import numpy as np
 import ast
 import sys
@@ -178,9 +179,11 @@ class ShepherdThread(threading.Thread):
 
         self.q_obs = queue.Queue()
         self.q_actions = queue.Queue()
+        self.time_spent_in_agent = 0.0
         self.pool = pool
         self.available = True
         self.thread_id = thread_id
+        self.native_id = None
         self.owner_session = None
 
         self.agent = agent
@@ -202,6 +205,7 @@ class ShepherdThread(threading.Thread):
         algo = algorithms[agent.algo.name]
 
         self.learner = algo(agent.policy, self.env, verbose=1, **kwargs)
+        
 
     def finish_episode(self):
         """ Finish an episode and make the thread available again.
@@ -229,6 +233,8 @@ class ShepherdThread(threading.Thread):
     def run(self):
         # Check if there is an already existing model to be loaded
         model = get_latest_model(self.save_name)
+        
+        self.native_id = threading.current_thread().ident
 
         if model != None:
             print("LOADING", model)
@@ -324,6 +330,13 @@ def env(request):
         session.save()
     except KeyError:
         return wrap_response(JsonResponse({'error': "Could not find thread in the current threads pool"}))
+    
+    compute_time_of_this_agent = 0.0
+    for t in pool.threads:
+        compute_time_of_this_agent += t.time_spent_in_agent
+        
+    print("                                      Compute time used by agent ", agent_id, " until now: ", compute_time_of_this_agent)
+        
 
     # Send the observation to the thread
     thread.q_obs.put((

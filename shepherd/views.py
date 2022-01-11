@@ -36,8 +36,13 @@ from sb3_contrib import BDPI, TabularBDPI
 from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.policies import avg_distributions
 
+
+from mysite.settings import RESET_TIME_COUNTER
+
 THREAD_POOLS = {}
 LOCK = threading.Lock()
+
+BEGINNING_OF_TIMES = time.monotonic()
 
 algorithms = {'BDPI': BDPI, 'TabularBDPI': TabularBDPI, 'A2C': A2C, 'DDPG': DDPG, 'DQN': DQN, 'HER': HER, 'PPO': PPO, 'SAC': SAC, 'TD3': TD3}
 
@@ -305,6 +310,7 @@ def login_user(request):
 @csrf_exempt
 def env(request):
     global ALL_THREADS
+    global BEGINNING_OF_TIMES
 
     data = json.loads(request.body)
 
@@ -331,11 +337,20 @@ def env(request):
     except KeyError:
         return wrap_response(JsonResponse({'error': "Could not find thread in the current threads pool"}))
     
+    # all of this for user time quota management
+    current_time = time.monotonic()
+    general_time_spent_running = current_time - BEGINNING_OF_TIMES
     compute_time_of_this_agent = 0.0
     for t in pool.threads:
         compute_time_of_this_agent += t.time_spent_in_agent
+    percentage_of_time_used_by_this_agent = compute_time_of_this_agent / general_time_spent_running    
         
-    print("                                      Compute time used by agent ", agent_id, " until now: ", compute_time_of_this_agent)
+    print("                                      Percentage of time used by agent ", agent_id, " in the last 5 minutes: ", percentage_of_time_used_by_this_agent)
+    
+    if general_time_spent_running > RESET_TIME_COUNTER: # reset counters every 5 minutes or so
+        BEGINNING_OF_TIMES += RESET_TIME_COUNTER 
+        for t in pool.threads:
+            t.time_spent_in_agent = 0.0
         
 
     # Send the observation to the thread

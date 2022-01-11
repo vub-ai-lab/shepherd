@@ -26,6 +26,9 @@ DEBUG = True
 
 ALLOWED_HOSTS = ['192.168.178.35', 'localhost', '127.0.0.1', 'steckdenis.be']
 
+# reset time counters every 5 minutes, used for user time quotas
+RESET_TIME_COUNTER = 5
+
 
 # Application definition
 

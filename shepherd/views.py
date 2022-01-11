@@ -37,7 +37,7 @@ from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.policies import avg_distributions
 
 
-from mysite.settings import RESET_TIME_COUNTER
+from mysite.settings import RESET_TIME_COUNTER, TIME_PERCENTAGE_ALLOWED_PER_AGENT
 
 THREAD_POOLS = {}
 LOCK = threading.Lock()
@@ -338,6 +338,7 @@ def env(request):
         return wrap_response(JsonResponse({'error': "Could not find thread in the current threads pool"}))
     
     # all of this for user time quota management
+    
     current_time = time.monotonic()
     general_time_spent_running = current_time - BEGINNING_OF_TIMES
     compute_time_of_this_agent = 0.0
@@ -345,7 +346,10 @@ def env(request):
         compute_time_of_this_agent += t.time_spent_in_agent
     percentage_of_time_used_by_this_agent = compute_time_of_this_agent / general_time_spent_running    
         
-    print("                                      Percentage of time used by agent ", agent_id, " in the last 5 minutes: ", percentage_of_time_used_by_this_agent)
+    print("                                      Percentage of time used by agent ", agent_id, " : ", percentage_of_time_used_by_this_agent)
+    
+    if percentage_of_time_used_by_this_agent > TIME_PERCENTAGE_ALLOWED_PER_AGENT:
+        return wrap_response(JsonResponse({'error': "Agent is consuming more compute time than allowed"}))
     
     if general_time_spent_running > RESET_TIME_COUNTER: # reset counters every 5 minutes or so
         BEGINNING_OF_TIMES += RESET_TIME_COUNTER 

@@ -263,6 +263,8 @@ def shepherd_wrap(view):
     """ This is what allows a Shepherd server to answer JSON queries from Javascript pages on different servers.
     """
     def inner(request):
+        print('Got request', request.body)
+
         try:
             response = view(request)
         except Exception as e:

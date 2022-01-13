@@ -8,6 +8,7 @@ import json
 
 import threading
 import queue
+import psutil
 import numpy as np
 import ast
 import sys
@@ -35,8 +36,13 @@ from sb3_contrib import BDPI, TabularBDPI
 from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.policies import avg_distributions
 
+
+from mysite.settings import RESET_TIME_COUNTER, TIME_PERCENTAGE_ALLOWED_PER_AGENT
+
 THREAD_POOLS = {}
 LOCK = threading.Lock()
+
+BEGINNING_OF_TIMES = time.monotonic()
 
 algorithms = {'BDPI': BDPI, 'TabularBDPI': TabularBDPI, 'A2C': A2C, 'DDPG': DDPG, 'DQN': DQN, 'HER': HER, 'PPO': PPO, 'SAC': SAC, 'TD3': TD3}
 
@@ -178,9 +184,11 @@ class ShepherdThread(threading.Thread):
 
         self.q_obs = queue.Queue()
         self.q_actions = queue.Queue()
+        self.time_spent_in_agent = 0.0
         self.pool = pool
         self.available = True
         self.thread_id = thread_id
+        self.native_id = None
         self.owner_session = None
 
         self.agent = agent
@@ -202,6 +210,7 @@ class ShepherdThread(threading.Thread):
         algo = algorithms[agent.algo.name]
 
         self.learner = algo(agent.policy, self.env, verbose=1, **kwargs)
+        
 
     def finish_episode(self):
         """ Finish an episode and make the thread available again.
@@ -229,6 +238,8 @@ class ShepherdThread(threading.Thread):
     def run(self):
         # Check if there is an already existing model to be loaded
         model = get_latest_model(self.save_name)
+        
+        self.native_id = threading.current_thread().ident
 
         if model != None:
             print("LOADING", model)
@@ -299,6 +310,7 @@ def login_user(request):
 @csrf_exempt
 def env(request):
     global ALL_THREADS
+    global BEGINNING_OF_TIMES
 
     data = json.loads(request.body)
 
@@ -324,6 +336,26 @@ def env(request):
         session.save()
     except KeyError:
         return wrap_response(JsonResponse({'error': "Could not find thread in the current threads pool"}))
+    
+    # all of this for user time quota management
+    
+    current_time = time.monotonic()
+    general_time_spent_running = current_time - BEGINNING_OF_TIMES
+    compute_time_of_this_agent = 0.0
+    for t in pool.threads:
+        compute_time_of_this_agent += t.time_spent_in_agent
+    percentage_of_time_used_by_this_agent = compute_time_of_this_agent / general_time_spent_running    
+        
+    print("                                      Percentage of time used by agent ", agent_id, " : ", percentage_of_time_used_by_this_agent)
+    
+    if percentage_of_time_used_by_this_agent > TIME_PERCENTAGE_ALLOWED_PER_AGENT:
+        return wrap_response(JsonResponse({'error': "Agent is consuming more compute time than allowed"}))
+    
+    if general_time_spent_running > RESET_TIME_COUNTER: # reset counters every 5 minutes or so
+        BEGINNING_OF_TIMES += RESET_TIME_COUNTER 
+        for t in pool.threads:
+            t.time_spent_in_agent = 0.0
+        
 
     # Send the observation to the thread
     thread.q_obs.put((

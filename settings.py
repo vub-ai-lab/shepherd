@@ -28,7 +28,7 @@ ALLOWED_HOSTS = ['192.168.178.35', 'localhost', '127.0.0.1', 'steckdenis.be']
 
 # reset time counters every 6 seconds, used for user time quotas
 RESET_TIME_COUNTER = 0.1 * 60
-TIME_PERCENTAGE_ALLOWED_PER_AGENT = 1.0
+TIME_PERCENTAGE_ALLOWED_PER_AGENT = 100.0
 
 # Application definition
 

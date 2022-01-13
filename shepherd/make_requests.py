@@ -22,7 +22,7 @@ env = gym.make(env_name)
 obs = env.reset()
 
 # First communication: login user
-ok = send_json_to_website({'apikey': 'daaa8020-9cb6-4d4a-be0f-00350360e578'}, 'shepherd/login_user/')
+ok = send_json_to_website({'apikey': '5b9f9b0e-8006-4b76-ba15-e78b54bb060e'}, 'shepherd/login_user/')
 print(ok)
 
 if 'ok' in ok:
@@ -36,7 +36,7 @@ if 'ok' in ok:
         print("ACTION ", action)
         obs, reward, done, info = env.step(action['action'])
         action = send_json_to_website({'obs': obs.tolist(), 'reward': reward, 'done': done, 'info': {}, 'session_key': session_key}, 'shepherd/env/')
-        
+        print(action) 
         # End of an episode, beginning of a new one
         if action['action'] is None:
             assert(done)

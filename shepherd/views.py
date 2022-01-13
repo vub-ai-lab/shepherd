@@ -4,6 +4,7 @@ from django.contrib.auth import authenticate, login
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import render
 from django.http import JsonResponse, HttpResponse, Http404
+from django.conf import settings
 import json
 
 import threading
@@ -16,6 +17,7 @@ import glob
 import time
 import io
 import os
+import traceback
 from .models import *
 import gym
 import torch as th
@@ -35,9 +37,6 @@ from stable_baselines3 import A2C, DDPG, DQN, HER, PPO, SAC, TD3
 from sb3_contrib import BDPI, TabularBDPI
 from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.policies import avg_distributions
-
-
-from mysite.settings import RESET_TIME_COUNTER, TIME_PERCENTAGE_ALLOWED_PER_AGENT
 
 THREAD_POOLS = {}
 LOCK = threading.Lock()
@@ -261,18 +260,28 @@ def action_to_json(a):
     else:
         return int(a)
 
-def wrap_response(response):
+def shepherd_wrap(view):
     """ This is what allows a Shepherd server to answer JSON queries from Javascript pages on different servers.
     """
-    response["Access-Control-Allow-Origin"] = "https://steckdenis.be"
-    response["Access-Control-Allow-Credentials"] = "true"
-    response["Access-Control-Allow-Methods"] = "POST, OPTIONS"
-    response["Access-Control-Max-Age"] = "1000"
-    response["Access-Control-Allow-Headers"] = "X-Requested-With, Content-Type"
+    def inner(request):
+        try:
+            response = view(request)
+        except Exception as e:
+            stacktrace = traceback.format_exc()
+            response = JsonResponse({'ok': False, 'error': str(e), 'traceback': stacktrace})
 
-    return response
+        response["Access-Control-Allow-Origin"] = "https://steckdenis.be"
+        response["Access-Control-Allow-Credentials"] = "true"
+        response["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        response["Access-Control-Max-Age"] = "1000"
+        response["Access-Control-Allow-Headers"] = "X-Requested-With, Content-Type"
+
+        return response
+
+    return inner
 
 @csrf_exempt
+@shepherd_wrap
 def login_user(request):
     global ALL_THREADS, THREAD_POOLS, LOCK
 
@@ -283,9 +292,9 @@ def login_user(request):
         key = APIKey.objects.select_related('agent').get(key=data['apikey'])
         agent = key.agent
     except AttributeError:
-        return wrap_response(JsonResponse({'error': 'JSON query data must contain an apikey element'}))
+        raise Exception("JSON query data must contain an apikey element")
     except APIKey.DoesNotExist:
-        return wrap_response(JsonResponse({'error': 'API Key not found in the database'}))
+        raise Exception("API Key not found in the database")
 
     # Create a pool for the agent_id if necessary
     agent_id = agent.id
@@ -305,9 +314,10 @@ def login_user(request):
 
     request.session.create()
 
-    return wrap_response(JsonResponse({'ok': True, 'session_key': request.session.session_key}))
+    return JsonResponse({'ok': True, 'session_key': request.session.session_key})
 
 @csrf_exempt
+@shepherd_wrap
 def env(request):
     global ALL_THREADS
     global BEGINNING_OF_TIMES
@@ -320,7 +330,7 @@ def env(request):
     try:
         session = Store(session_key=data['session_key'])
     except:
-        return wrap_response(JsonResponse({'error': "Unable to reload session, is session_key sent as JSON in the request?"}))
+        raise Exception("Unable to reload session, is session_key sent as JSON in the request?")
 
     # Find the thread
     thread_id = session['thread_id']
@@ -335,7 +345,7 @@ def env(request):
         session['thread_id'] = thread_id
         session.save()
     except KeyError:
-        return wrap_response(JsonResponse({'error': "Could not find thread in the current threads pool"}))
+        raise Exception("Could not find thread in the current threads pool")
     
     # all of this for user time quota management
     
@@ -345,17 +355,14 @@ def env(request):
     for t in pool.threads:
         compute_time_of_this_agent += t.time_spent_in_agent
     percentage_of_time_used_by_this_agent = compute_time_of_this_agent / general_time_spent_running    
-        
-    print("                                      Percentage of time used by agent ", agent_id, " : ", percentage_of_time_used_by_this_agent)
     
-    if percentage_of_time_used_by_this_agent > TIME_PERCENTAGE_ALLOWED_PER_AGENT:
-        return wrap_response(JsonResponse({'error': "Agent is consuming more compute time than allowed"}))
+    if percentage_of_time_used_by_this_agent > settings.TIME_PERCENTAGE_ALLOWED_PER_AGENT:
+        raise Exception("Agent is consuming more compute time than allowed. CPU usage = %f cpu seconds per wall-clock seconds" % percentage_of_time_used_by_this_agent)
     
-    if general_time_spent_running > RESET_TIME_COUNTER: # reset counters every 5 minutes or so
-        BEGINNING_OF_TIMES += RESET_TIME_COUNTER 
+    if general_time_spent_running > settings.RESET_TIME_COUNTER: # reset counters every 5 minutes or so
+        BEGINNING_OF_TIMES = time.monotonic()
         for t in pool.threads:
             t.time_spent_in_agent = 0.0
-        
 
     # Send the observation to the thread
     thread.q_obs.put((
@@ -381,7 +388,7 @@ def env(request):
     else:
         action = action_to_json(thread.q_actions.get())
 
-    return wrap_response(JsonResponse({'action': action}))
+    return JsonResponse({'action': action})
 
 
 # http://localhost:5000/shepherd/send_curve/?agent_id=1
@@ -419,7 +426,7 @@ def send_curve(request):
     buf.seek(0)
     plt.close(plot)
 
-    return wrap_response(HttpResponse(buf, content_type="image/svg+xml"))
+    return HttpResponse(buf, content_type="image/svg+xml")
 
 @login_required
 def generate_zip(request):

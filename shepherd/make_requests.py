@@ -8,12 +8,10 @@ sys.path.append(os.path.abspath(__file__ + '/../..'))
 import gym_envs
 
 
-SESSION = requests.Session()
-
 def send_json_to_website(d, path):
     """ Sends "d", a dictionary, to the website, and returns the response as a Python dictionary
     """
-    r = SESSION.post('http://localhost:8000/'+ path, json=d)
+    r = requests.post('http://localhost:8000/'+ path, json=d)
     return r.json()
 
 # Make the environment on client side (here, gym env)

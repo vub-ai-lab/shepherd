@@ -17,6 +17,7 @@ import time
 import io
 import os
 import traceback
+import uuid
 from .models import *
 import gym
 import torch as th
@@ -39,6 +40,7 @@ from stable_baselines3.common.policies import avg_distributions
 
 THREAD_POOLS = {}
 LOCK = threading.Lock()
+SESSIONS = {}
 
 BEGINNING_OF_TIMES = time.monotonic()
 
@@ -284,7 +286,7 @@ def shepherd_wrap(view):
 @csrf_exempt
 @shepherd_wrap
 def login_user(request):
-    global ALL_THREADS, THREAD_POOLS, LOCK
+    global ALL_THREADS, THREAD_POOLS, LOCK, SESSIONS
 
     data = json.loads(request.body)
 
@@ -310,12 +312,14 @@ def login_user(request):
         agent_thread = thread_pool.allocate_thread()
         thread_id = agent_thread.thread_id
 
-    request.session['thread_id'] = thread_id
-    request.session['agent_id'] = agent_id
+    session_key = str(uuid.uuid4())
+    session = {
+        'thread_id': thread_id,
+        'agent_id': agent_id
+    }
+    SESSIONS[session_key] = session
 
-    request.session.create()
-
-    return JsonResponse({'ok': True, 'session_key': request.session.session_key})
+    return JsonResponse({'ok': True, 'session_key': session_key})
 
 @csrf_exempt
 @shepherd_wrap
@@ -326,12 +330,15 @@ def env(request):
     data = json.loads(request.body)
 
     # Load the session from the session_key in the request
-    Store = type(request.session)
+    if 'session_key' not in data:
+        raise Exception('No session_key in the request. Please use /login_user/ to get a session key from an API key')
 
-    try:
-        session = Store(session_key=data['session_key'])
-    except:
-        raise Exception("Unable to reload session, is session_key sent as JSON in the request?")
+    session_key = data['session_key']
+
+    if session_key not in SESSIONS:
+        raise Exception('Session key not in the sessions known to this instance of Shepherd. The server may have restarted since you got your session key. Please use /login_user/ again to get a fresh session key')
+
+    session = SESSIONS[session_key]
 
     # Find the thread
     thread_id = session['thread_id']
@@ -344,7 +351,6 @@ def env(request):
             thread_id = thread.thread_id
 
         session['thread_id'] = thread_id
-        session.save()
     except KeyError:
         raise Exception("Could not find thread in the current threads pool")
     

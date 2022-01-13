@@ -9,7 +9,6 @@ import json
 
 import threading
 import queue
-import psutil
 import numpy as np
 import ast
 import sys

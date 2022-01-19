@@ -5,8 +5,8 @@ from django.contrib.auth.models import User
 import uuid
 
 class Algorithm(models.Model):
-    name = models.CharField("algorithm's name", max_length=32)
-    can_continuous_actions = models.BooleanField("Compatible with continuous actions")
+    name = models.CharField("algorithm's name", max_length=32, help_text="Name of the Reinforcement Learning algorithm (for instance, Proximal Policy Optimization (PPO)).")
+    can_continuous_actions = models.BooleanField("Compatible with continuous actions", help_text="Not all RL algorithms are compatible with continuous actions (a continuous action is a real number); this field indiscates if this specific RL algorithm can handle continuous actions, True or False. In contrast, we consider that all RL algorithms available via Shepherd are compatible with discrete actions by default.")
 
     def __str__(self):
         return self.name
@@ -17,11 +17,12 @@ class Agent(models.Model):
         ('CnnPolicy', 'CnnPolicy: states that are images or 2D arrays'),
     ]
 
-    owner = models.ForeignKey(User, on_delete=models.CASCADE, verbose_name="user that owns this agent")
-    algo = models.ForeignKey(Algorithm, null=True, on_delete=models.SET_NULL, verbose_name="RL algorithm executed by this agent")
-    policy = models.CharField("Policy class", max_length=32, choices=POLICIES)
-    action_space = models.TextField('Action space JSON')
-    observation_space = models.TextField('Observation space JSON')
+    owner = models.ForeignKey(User, on_delete=models.CASCADE, verbose_name="user that owns this agent", help_text="The owner of an agent is the user/client of Shepherd.")
+    algo = models.ForeignKey(Algorithm, null=True, on_delete=models.SET_NULL, verbose_name="RL algorithm executed by this agent", help_text="Reinforcement Learning algorithm that the agent is running (for instance, PPO, SAC, BDPI, etc).")
+    policy = models.CharField('Policy class', max_length=32, choices=POLICIES, help_text="The Policy class used depends on the shape of the observations passed to the agent. CnnPolicy is used when the observations of the environment are raw images. Otherwise, MlpPolicy is preferable.")
+    action_space = models.TextField('Action space JSON', help_text="")
+    observation_space = models.TextField('Observation space JSON', help_text="")
+    creation_time = models.DateTimeField('Creation of the agent', auto_now_add=True)
 
     def learning_curve(self):
         img_tag = '<img id=\"learning_curve\" src="/shepherd/send_curve/?agent_id=%s&">' % self.id
@@ -41,10 +42,24 @@ window.onload = function() {
 
         return mark_safe(img_tag + refresh)
 
-    def latest_zip(self):
+    def latest_agent_model_zip_file(self):
         return format_html(
             '<a href="/shepherd/generate_zip/?agent_id=%s">Download ZIP (if it exists)</a>' % self.id
         )
+    
+    
+    def latest_time(self):
+        return mark_safe("""
+<script>
+    async function get_last_time() {
+        const response = await fetch("/shepherd/get_how_much_time_since_last_time/?agent_id=%s");
+        element = document.getElementById("last_time");
+        element.innerHTML = await response.text();
+    }
+    
+    get_last_time();
+</script><div id="last_time">loading...</div>
+""" % self.id)
 
     def __str__(self):
         return str(self.id) + ': ' + ('(none)' if self.algo is None else self.algo.name) + ' agent of ' + self.owner.username
@@ -64,7 +79,7 @@ def make_api_key():
 
 class APIKey(models.Model):
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, verbose_name="Agent identified by this API key")
-    key = models.CharField("API Key string", max_length=36, default=make_api_key(), unique=True)
+    key = models.CharField('API Key string', max_length=36, default=make_api_key(), unique=True)
 
     def __str__(self):
         return self.key + " for agent " + str(self.agent)

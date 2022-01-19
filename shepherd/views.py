@@ -13,6 +13,7 @@ import numpy as np
 import ast
 import sys
 import glob
+import datetime
 import time
 import io
 import os
@@ -269,6 +270,7 @@ def wrap_response(response):
     response["Access-Control-Allow-Methods"] = "POST, OPTIONS"
     response["Access-Control-Max-Age"] = "1000"
     response["Access-Control-Allow-Headers"] = "X-Requested-With, Content-Type"
+    response["X-Frame-Options"] = "SAMEORIGIN"
 
     return response
 
@@ -299,6 +301,7 @@ def login_user(request):
         # Allocate a thread for the client
         agent_thread = thread_pool.allocate_thread()
         thread_id = agent_thread.thread_id
+
 
     request.session['thread_id'] = thread_id
     request.session['agent_id'] = agent_id
@@ -387,6 +390,8 @@ def env(request):
 # http://localhost:5000/shepherd/send_curve/?agent_id=1
 @login_required
 def send_curve(request):
+    """ Show the agent's learning curve on the admin site.
+    """
     # Find agent
     agent_id = request.GET['agent_id']
 
@@ -423,6 +428,8 @@ def send_curve(request):
 
 @login_required
 def generate_zip(request):
+    """ Make the latest agent's model zip file available for download on the amdin site.
+    """
     # Find agent
     agent_id = request.GET['agent_id']
 
@@ -445,7 +452,43 @@ def generate_zip(request):
     # Return the zip data
     with open(zipname, 'rb') as f:
         return HttpResponse(f, headers={'Content-Type': 'application/zip', 'Content-Disposition': 'attachment; filename="' + savename + '.zip"'})
+    
+    
 
+@login_required
+def get_how_much_time_since_last_time(request):
+    """ Show how much time passed since last touching this agent on the admin site, by retrieving the last time of edition of the agent's model zip file.
+    """
+    # Find agent
+    agent_id = request.GET['agent_id']
+
+    # Check that the agent belongs LOCKto the currently logged-in user
+    try:
+        agent = Agent.objects.get(id=agent_id)
+
+        if agent.owner_id != request.user.id and not request.user.is_superuser:
+            raise Http404("No such agent for this user")
+    except Agent.DoesNotExist:
+        raise Http404("Unknown agent")
+
+    # Amount of time that has passed since last time the agent was learning = current_time - time of edition of the last agent's model zip file in the logs
+    # let's create a new tmp file just to get the current time, then delete it
+    #os.mknod('tmp')
+    #current_time = datetime.timedelta(seconds=os.path.getmtime('tmp'))
+    #os.remove('tmp')
+    current_time = time.time()
+    
+    savename = str(agent.owner) + '_' + agent.algo.name + '_' + str(agent.id)
+    zipname = get_latest_model(savename)
+
+    if zipname is None:
+        raise Http404("No log yet for this agent")
+    
+    zip_time = os.path.getmtime(zipname)
+    seconds_since_edit = current_time - zip_time
+    delta = datetime.timedelta(seconds=seconds_since_edit)
+    
+    return wrap_response(HttpResponse(str(delta) + ' ago, on ' + datetime.datetime.fromtimestamp(zip_time).strftime('%d/%m/%Y %H:%M:%S'), content_type='text/html; charset=UTF-8'))
 
 
 

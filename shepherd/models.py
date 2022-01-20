@@ -12,14 +12,8 @@ class Algorithm(models.Model):
         return self.name
 
 class Agent(models.Model):
-    POLICIES = [
-        ('MlpPolicy', 'MlpPolicy: states that are lists of floats'),
-        ('CnnPolicy', 'CnnPolicy: states that are images or 2D arrays'),
-    ]
-
     owner = models.ForeignKey(User, on_delete=models.CASCADE, verbose_name="user that owns this agent")
     algo = models.ForeignKey(Algorithm, null=True, on_delete=models.SET_NULL, verbose_name="RL algorithm executed by this agent")
-    policy = models.CharField("Policy class", max_length=32, choices=POLICIES)
     action_space = models.TextField('Action space JSON')
     observation_space = models.TextField('Observation space JSON')
 

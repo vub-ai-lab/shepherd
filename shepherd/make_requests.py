@@ -15,12 +15,13 @@ def send_json_to_website(d, path):
     return r.json()
 
 # Make the environment on client side (here, gym env)
-env_name = 'LunarLander-v2'
+env_name = sys.argv[2]
 env = gym.make(env_name)
 obs = env.reset()
 
 # First communication: login user
-ok = send_json_to_website({'apikey': '5b9f9b0e-8006-4b76-ba15-e78b54bb060e'}, 'shepherd/login_user/')
+apikey = sys.argv[1]
+ok = send_json_to_website({'apikey': apikey}, 'shepherd/login_user/')
 print(ok)
 
 if 'ok' in ok:

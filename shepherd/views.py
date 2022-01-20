@@ -29,14 +29,12 @@ import matplotlib.pyplot as plt
 
 sys.path.insert(0, os.path.abspath(__file__ + '/../..'))
 sys.path.insert(0, os.path.abspath(__file__ + '/../../stable-baselines3/'))
-sys.path.insert(0, os.path.abspath(__file__ + '/../../stable-baselines3-contrib/'))
 
 import gym_envs
 
 from stable_baselines3 import A2C, DDPG, DQN, HER, PPO, SAC, TD3
-from sb3_contrib import BDPI, TabularBDPI
 from stable_baselines3.common.callbacks import CheckpointCallback
-from stable_baselines3.common.policies import avg_distributions
+from stable_baselines3.common.utils import obs_as_tensor
 
 THREAD_POOLS = {}
 LOCK = threading.Lock()
@@ -44,18 +42,13 @@ SESSIONS = {}
 
 BEGINNING_OF_TIMES = time.monotonic()
 
-algorithms = {'BDPI': BDPI, 'TabularBDPI': TabularBDPI, 'A2C': A2C, 'DDPG': DDPG, 'DQN': DQN, 'HER': HER, 'PPO': PPO, 'SAC': SAC, 'TD3': TD3}
+algorithms = {'A2C': A2C, 'DDPG': DDPG, 'DQN': DQN, 'HER': HER, 'PPO': PPO, 'SAC': SAC, 'TD3': TD3}
 
 def str_to_json(space):
     try:
-        space = int(space)
+        return int(space)
     except ValueError:
         return ast.literal_eval(space)
-    if isinstance(space, int):
-        return space
-    else:
-        print("ERROR, space is neither an int, nor a list of high and low")
-        return None
 
 def get_param_values_from_database(agent):
     """
@@ -89,7 +82,7 @@ def get_latest_model(save_name):
     try:
         latest_model = max(glob.glob(directory + '/*'), key=os.path.getctime)
     except ValueError:
-        latest_log = None
+        pass
 
     return latest_model
 
@@ -158,24 +151,31 @@ class AgentThreadPool:
         """ Ask all the threads to produce an advice vector for observation obs
         """
         action_space = self.threads[0].env.action_space
+        is_continuous = isinstance(action_space, gym.spaces.Box)
 
-        if isinstance(action_space, spaces.Discrete):
-            # Advice current_thread with every thread that has a last_activity_time
-            # later than the start_time of current_thread
-            threads = []
+        # Advise current_thread with every thread that has a last_activity_time
+        # later than the start_time of current_thread
+        threads = []
 
-            for t in self.threads:
-                if (t is not current_thread) and (t.last_activity_time > current_thread.start_time):
-                    threads.append(t)
+        for t in self.threads:
+            if (t is not current_thread) and (t.last_activity_time > current_thread.start_time):
+                threads.append(t)
 
-            if len(threads) > 1:
-                advice_distributions = [a.get_probas(obs).distribution for a in threads]
-                return avg_distributions(advice_distributions, adviceact=0.8)
+        if len(threads) == 0:
+            # No advice available, return some default (neutral) advice
+            if is_continuous:
+                advice = current_thread.get_probas(obs)    # TODO: Use ourselves as advice. This works for mean (mean combined with mean leads to mean), but not std (std combined with std leads to std / 2*sqrt(std))
             else:
-                # No advisor (only one thread, ourselves). Return a null distribution
-                return th.distributions.categorical.Categorical(logits=th.ones(action_space.n,))
-        else:
-            raise NotImplementedError("Continuous-action environments are not supported by Shepherd yet")
+                advice = np.ones((action_space.n,), dtype=np.float32) / action_space.n
+
+            return advice
+
+        # Average the received advices (this will average the probability distributions for discrete actions, or the mean/variances for continuous actions)
+        # TODO: For continuous actions, the averaging has no mathematical meaning (and does not increase variance, for instance). We need to find something else to do.
+        advices = [a.get_probas(obs) for a in threads]
+        advice = np.mean(advices, axis=0)
+
+        return advice[0]
 
 
 class ShepherdThread(threading.Thread):
@@ -209,7 +209,7 @@ class ShepherdThread(threading.Thread):
         # Instantiate the agent
         algo = algorithms[agent.algo.name]
 
-        self.learner = algo(agent.policy, self.env, verbose=1, **kwargs)
+        self.learner = algo('MultiInputPolicy', self.env, verbose=1, **kwargs)
         
 
     def finish_episode(self):
@@ -228,7 +228,17 @@ class ShepherdThread(threading.Thread):
     def get_probas(self, obs):
         """ Ask the learner for action probabilities for observation <obs>
         """
-        return self.learner.policy.get_probas(obs)
+        # Cast obs to PyTorch tensors, and add a (1,) batch dimension to every tensor
+        def add_batch(o):
+            if isinstance(o, dict):
+                return {k: add_batch(v) for k, v in o.items()}
+            else:
+                return o[None, ...]
+
+        obs = obs_as_tensor(obs, self.learner.device)
+        obs = add_batch(obs)
+
+        return self.learner.get_advice(obs).cpu().numpy()
 
     def get_advice(self, obs):
         """ Ask the threadpool for advice

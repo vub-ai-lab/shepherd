@@ -32,15 +32,28 @@ def json_to_space(j):
 
 class ShepherdEnv(gym.Env):
     def __init__(self, parent_thread = None, observation_space = None, action_space = None):
-        self.parent_thread = parent_thread
-        self.observation_space = json_to_space(observation_space)
         self.action_space = json_to_space(action_space)
+        self.observation_space = json_to_space(observation_space)
+        self.parent_thread = parent_thread
         self.time_when_i_got_an_observation = time.monotonic()
+
+        # Compute the advice shape
+        if isinstance(self.action_space, spaces.Discrete):
+            # Discrete actions, multinomial advice
+            advice_shape = (self.action_space.n,)
+        else:
+            # Continuous actions, mean/std advice
+            advice_shape = (2,) + self.action_space.shape
+
+        self.observation_space = spaces.Dict({
+            'obs': self.observation_space,
+            'advice': spaces.Box(shape=advice_shape, low=0.0, high=1.0)
+        })
                
     def reset(self):
         """ Reset the environment and return the initial state number
         """
-        return self.parent_thread.q_obs.get()[0]
+        return self.get_state()[0]
         
     def step(self, action):
         now = time.monotonic()
@@ -49,11 +62,20 @@ class ShepherdEnv(gym.Env):
         self.parent_thread.time_spent_in_agent += time_the_agent_spent_choosing_an_action
         
         self.parent_thread.q_actions.put(action)
-        rs = self.parent_thread.q_obs.get()
-        
+        rs = self.get_state()
         self.time_when_i_got_an_observation = time.monotonic()
         
         return rs
+
+    def get_state(self):
+        """ Get a state, reward, done, info tuple from the queue
+        """
+        s, r, d, i = self.parent_thread.q_obs.get()
+
+        obs = {"obs": s}
+        obs["advice"] = self.get_advice(obs)
+
+        return obs, r, d, i
 
     def get_advice(self, obs):
         """ Return an advice torch.distributions.distribution.Distribution that

@@ -14,9 +14,13 @@ class Algorithm(models.Model):
 class Agent(models.Model):
     owner = models.ForeignKey(User, on_delete=models.CASCADE, verbose_name="user that owns this agent", help_text="The owner of an agent is the user/client of Shepherd.")
     algo = models.ForeignKey(Algorithm, null=True, on_delete=models.SET_NULL, verbose_name="RL algorithm executed by this agent", help_text="Reinforcement Learning algorithm that the agent is running (for instance, PPO, SAC, BDPI, etc).")
+
     action_space = models.TextField('Action space JSON', help_text="")
     observation_space = models.TextField('Observation space JSON', help_text="")
+
     creation_time = models.DateTimeField('Creation of the agent', auto_now_add=True)
+    last_activity_time = models.DateTimeField('Date of last usage of the agent', auto_now_add=True)
+    max_percent_cpu_usage = models.FloatField('Maximum CPU usage in percentage points (100.0 = 1 full CPU used every one-minute interval)', default=100.0)
 
     def learning_curve(self):
         img_tag = '<img id=\"learning_curve\" src="/shepherd/send_curve/?agent_id=%s&">' % self.id
@@ -40,20 +44,6 @@ window.onload = function() {
         return format_html(
             '<a href="/shepherd/generate_zip/?agent_id=%s">Download ZIP (if it exists)</a>' % self.id
         )
-    
-    
-    def latest_time(self):
-        return mark_safe("""
-<script>
-    async function get_last_time() {
-        const response = await fetch("/shepherd/get_how_much_time_since_last_time/?agent_id=%s");
-        element = document.getElementById("last_time");
-        element.innerHTML = await response.text();
-    }
-    
-    get_last_time();
-</script><div id="last_time">loading...</div>
-""" % self.id)
 
     def __str__(self):
         return str(self.id) + ': ' + ('(none)' if self.algo is None else self.algo.name) + ' agent of ' + self.owner.username

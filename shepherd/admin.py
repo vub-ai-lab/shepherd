@@ -11,7 +11,7 @@ def only_own(s, request, **kwargs):
     return qs.filter(**kwargs)
 
 class AgentAdmin(admin.ModelAdmin):
-    readonly_fields = ['learning_curve', 'latest_agent_model_zip_file', 'creation_time', 'latest_time']
+    readonly_fields = ['learning_curve', 'latest_agent_model_zip_file', 'creation_time', 'last_activity_time']
 
     # Normal users only see their own agents
     def get_queryset(self, request):

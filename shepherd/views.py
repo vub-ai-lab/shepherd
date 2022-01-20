@@ -5,15 +5,16 @@ from django.contrib.auth.decorators import login_required
 from django.shortcuts import render
 from django.http import JsonResponse, HttpResponse, Http404
 from django.conf import settings
+from django.utils import timezone
 
 import json
 import numpy as np
 import torch as th
 import gym
+import psutil
 
 import ast
 import sys
-import glob
 import datetime
 import time
 import io
@@ -82,6 +83,22 @@ class AgentProcessPool:
         self.action_space = action_space
         self.agent = agent
 
+        self.last_time_quota_checked = time.monotonic()
+        self.meets_quota = True
+
+    def meets_cputime_quota(self):
+        if (time.monotonic() - self.last_time_quota_checked) > 60.:
+            # Checked quota more than one minute ago, re-check
+            total_percent = 0.0
+
+            for p in self.processes:
+                total_percent += p["psutil"].cpu_percent()
+
+            print(total_percent)
+            self.meets_quota = (total_percent < self.agent.max_percent_cpu_usage)
+
+        return self.meets_quota
+
     def allocate_process(self):
         """ Return a process for a new episode. It is either an existing available
             process, or a new process.
@@ -107,6 +124,7 @@ class AgentProcessPool:
 
         self.processes.append({
             "process": p,
+            "psutil": psutil.Process(p.pid),
             "available": False,
             "to_process": to_process,
             "from_process": from_process,
@@ -116,7 +134,10 @@ class AgentProcessPool:
             "id": len(self.processes)
         })
 
-        return self.processes[-1]
+        p = self.processes[-1]
+        p["psutil"].cpu_percent()  # First read of the CPU counters for quota
+
+        return p
 
     def get_process_for_session(self, id, session_key):
         """ Get the process for a session. It is processes[id], except in the
@@ -193,6 +214,10 @@ class AgentProcessPool:
     def get_action_from_process(self, p, obs, reward, done, info):
         """ Send an experience to a process and get an action from it
         """
+        # Update the last activity time of the agent
+        self.agent.last_activity_time = timezone.now()
+        self.agent.save()
+
         # Make a dictionary observation (obs is currently a Numpy array)
         obs = {"obs": obs}   # See shepherdEnv.py for keys
 
@@ -312,9 +337,9 @@ def env(request):
     except KeyError:
         raise Exception("Could not find thread in the current threads pool")
     
-    # Time quota management (TODO: use psutil to sum the CPU time of every worker processes of an agent over a specific period)
-    # if not pool.meets_cputime_quota():
-    #     raise Exception("CPU time quota exceeded. Please re-try this request in a few moments")
+    # Time quota management
+    if not pool.meets_cputime_quota():
+        raise Exception("CPU time quota exceeded. Please re-try this request in a few moments")
 
     # Ask the process for an action
     action = pool.get_action_from_process(

@@ -5,11 +5,12 @@ from django.contrib.auth.decorators import login_required
 from django.shortcuts import render
 from django.http import JsonResponse, HttpResponse, Http404
 from django.conf import settings
-import json
 
-import threading
-import queue
+import json
 import numpy as np
+import torch as th
+import gym
+
 import ast
 import sys
 import glob
@@ -19,37 +20,31 @@ import io
 import os
 import traceback
 import uuid
+import multiprocessing
+
 from .models import *
-import gym
-import torch as th
-from gym import spaces
+from .worker_process import get_latest_model, spawn_worker_process
 
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-sys.path.insert(0, os.path.abspath(__file__ + '/../..'))
-sys.path.insert(0, os.path.abspath(__file__ + '/../../stable-baselines3/'))
-
-import gym_envs
-
-from stable_baselines3 import A2C, DDPG, DQN, HER, PPO, SAC, TD3
-from stable_baselines3.common.callbacks import CheckpointCallback
-from stable_baselines3.common.utils import obs_as_tensor
-
-THREAD_POOLS = {}
-LOCK = threading.Lock()
+PROCESS_POOLS = {}
 SESSIONS = {}
-
-BEGINNING_OF_TIMES = time.monotonic()
-
-algorithms = {'A2C': A2C, 'DDPG': DDPG, 'DQN': DQN, 'HER': HER, 'PPO': PPO, 'SAC': SAC, 'TD3': TD3}
 
 def str_to_json(space):
     try:
         return int(space)
     except ValueError:
         return ast.literal_eval(space)
+
+def action_to_json(a):
+    if a is None:
+        return None
+    elif isinstance(a, np.ndarray):
+        return a.tolist()
+    else:
+        return int(a)
 
 def get_param_values_from_database(agent):
     """
@@ -77,200 +72,152 @@ def get_param_values_from_database(agent):
 
     return arguments
 
-def get_latest_model(save_name):
-    directory = './logs_'+save_name+'/'
-    latest_model = None
-    try:
-        latest_model = max(glob.glob(directory + '/*'), key=os.path.getctime)
-    except ValueError:
-        pass
-
-    return latest_model
-
-class AgentThreadPool:
-    """ List of ShepherdThread instances for a particular agent_id. Used to produce advice
+class AgentProcessPool:
+    """ List of Process instances for a particular agent_id. Used to produce advice
     """
 
     def __init__(self, observation_space, action_space, agent):
-        self.threads = []
+        self.processes = []
         self.observation_space = observation_space
         self.action_space = action_space
         self.agent = agent
 
-    def allocate_thread(self):
-        """ Return a thread for a new episode. It is either an existing available
-            thread, or a new thread.
+    def allocate_process(self):
+        """ Return a process for a new episode. It is either an existing available
+            process, or a new process.
         """
-        for t in self.threads:
-            if t.available:
-                t.available = False
-                return t
+        for p in self.processes:
+            if p["available"]:
+                p["available"] = False
+                return p
 
-        # Make a new thread, none of the existing ones was available
-        t = ShepherdThread(self.observation_space, self.action_space, self.agent, len(self.threads), self)
-        t.available = False
-        t.start()
+        # Make a new process, none of the existing ones was available
+        to_process = multiprocessing.Queue()
+        from_process = multiprocessing.Queue()
 
-        self.threads.append(t)
-        return t
+        p = spawn_worker_process(
+            to_process,
+            from_process,
+            self.action_space,
+            self.observation_space,
+            self.agent.algo.name,
+            get_param_values_from_database(self.agent),
+            str(self.agent.owner) + '_' + self.agent.algo.name + '_' + str(self.agent.id)
+        )
 
-    def get_thread_for_session(self, thread_id, session_key):
-        """ Get the thread for a session. It is threads[thread_id], except in the
-            case that this thread has already been re-used by another session, in
-            which case a new thread has to be allocated for this session.
+        self.processes.append({
+            "process": p,
+            "available": False,
+            "to_process": to_process,
+            "from_process": from_process,
+            "owner_session": None,
+            "last_activity_time": time.monotonic(),
+            "start_time": time.monotonic(),
+            "id": len(self.processes)
+        })
+
+        return self.processes[-1]
+
+    def get_process_for_session(self, id, session_key):
+        """ Get the process for a session. It is processes[id], except in the
+            case that this process has already been re-used by another session, in
+            which case a new process has to be allocated for this session.
         """
-        current_thread = self.threads[thread_id]
+        p = self.processes[id]
 
-        if (current_thread.owner_session is not None) and (current_thread.owner_session != session_key):
+        if (p["owner_session"] is not None) and (p["owner_session"] != session_key):
             # The thread has been given to another session, get another one
-            current_thread = self.allocate_thread()
+            p = self.allocate_process()
 
-        current_thread.available = False
-        current_thread.owner_session = session_key
+        p["available"] = False
+        p["owner_session"] = session_key
 
-        return current_thread
+        return p
 
-    def add_thread(self, t):
-        """ Add a thread to the list of threads
-        """
-        self.threads.append(t)
-
-    def cleanup_threads(self):
-        """ Explore the threads and remove those that have not seen any recent activity.
+    def cleanup_processes(self):
+        """ Explore the processes and remove those that have not seen any recent activity.
         """
         i = 0
         current_time = time.monotonic()
 
-        while i < len(self.threads):
-            if (current_time - self.threads[i].last_activity_time) > 30*60:
+        while i < len(self.processes):
+            p = self.processes[i]
+
+            if (current_time - p["last_activity_time"]) > 30*60:
                 # No activity since 30 minutes
-                del self.threads[i]
+                p["to_process"].put({"type": "stop"})
+                p["process"].join()
+
+                del self.processes[i]
             else:
                 i += 1
 
-    def get_advice(self, obs, current_thread):
+    def produce_advice_from_other_processes(self, obs, current_process):
         """ Ask all the threads to produce an advice vector for observation obs
         """
-        action_space = self.threads[0].env.action_space
-        is_continuous = isinstance(action_space, gym.spaces.Box)
+        if isinstance(self.action_space, int):
+            num_actions = self.action_space
+        else:
+            num_actions = None
 
-        # Advise current_thread with every thread that has a last_activity_time
-        # later than the start_time of current_thread
-        threads = []
+        # Advise current_process with every process that has a last_activity_time
+        # later than the start_time of current_process
+        processes = []
 
-        for t in self.threads:
-            if (t is not current_thread) and (t.last_activity_time > current_thread.start_time):
-                threads.append(t)
+        for p in self.processes:
+            if (p is not current_process) and (p["last_activity_time"] > current_process["start_time"]):
+                processes.append(p)
 
-        if len(threads) == 0:
+        if len(processes) == 0:
             # No advice available, return some default (neutral) advice
-            if is_continuous:
-                advice = current_thread.get_probas(obs)    # TODO: Use ourselves as advice. This works for mean (mean combined with mean leads to mean), but not std (std combined with std leads to std / 2*sqrt(std))
+            if num_actions is None:
+                advice = self.get_advice_from_process(current_process, obs) # TODO: Use ourselves as advice. This works for mean (mean combined with mean leads to mean), but not std (std combined with std leads to std / 2*sqrt(std))
             else:
-                advice = np.ones((action_space.n,), dtype=np.float32) / action_space.n
+                advice = np.ones((num_actions,), dtype=np.float32) / num_actions
 
             return advice
 
         # Average the received advices (this will average the probability distributions for discrete actions, or the mean/variances for continuous actions)
         # TODO: For continuous actions, the averaging has no mathematical meaning (and does not increase variance, for instance). We need to find something else to do.
-        advices = [a.get_probas(obs) for a in threads]
+        advices = [self.get_advice_from_process(p, obs) for p in processes]
         advice = np.mean(advices, axis=0)
 
         return advice[0]
 
-
-class ShepherdThread(threading.Thread):
-    def __init__(self, observation_space, action_space, agent, thread_id, pool):
-        super().__init__()
-
-        self.q_obs = queue.Queue()
-        self.q_actions = queue.Queue()
-        self.time_spent_in_agent = 0.0
-        self.pool = pool
-        self.available = True
-        self.thread_id = thread_id
-        self.native_id = None
-        self.owner_session = None
-
-        self.agent = agent
-        self.cumulative_reward = 0.0
-        self.start_time = time.monotonic()
-        self.last_activity_time = time.monotonic()
-
-        self.env = gym.make("ShepherdEnv-v0", parent_thread = self, observation_space = observation_space, action_space = action_space)
-
-        # Get parameter values
-        kwargs = get_param_values_from_database(agent)
-        print("KWARGS ", kwargs)
-
-        # Save a checkpoint every X steps
-        self.save_name = str(agent.owner) + '_' + agent.algo.name + '_' + str(agent.id)
-        self.checkpoint_callback = CheckpointCallback(save_freq=kwargs.get('save_freq', 1000), save_path='./logs_'+self.save_name+'/', name_prefix='rl_model'+'_'+str(thread_id))
-
-        # Instantiate the agent
-        algo = algorithms[agent.algo.name]
-
-        self.learner = algo('MultiInputPolicy', self.env, verbose=1, **kwargs)
-        
-
-    def finish_episode(self):
-        """ Finish an episode and make the thread available again.
+    def get_advice_from_process(self, p, obs):
+        """ Send a request to the process for advice, and return it
         """
-        log_entry = EpisodeReturn()
-        log_entry.agent = self.agent
-        log_entry.ret = self.cumulative_reward
-        log_entry.save()
+        p["to_process"].put({"type": "advice", "obs": obs})
+        return p["from_process"].get()["advice"]
 
-        # Reset cumulative_reward for the next episode
-        self.cumulative_reward = 0.0
-        self.available = True
-        self.owner_session = None
-
-    def get_probas(self, obs):
-        """ Ask the learner for action probabilities for observation <obs>
+    def get_action_from_process(self, p, obs, reward, done, info):
+        """ Send an experience to a process and get an action from it
         """
-        # Cast obs to PyTorch tensors, and add a (1,) batch dimension to every tensor
-        def add_batch(o):
-            if isinstance(o, dict):
-                return {k: add_batch(v) for k, v in o.items()}
-            else:
-                return o[None, ...]
+        # Make a dictionary observation (obs is currently a Numpy array)
+        obs = {"obs": obs}   # See shepherdEnv.py for keys
 
-        obs = obs_as_tensor(obs, self.learner.device)
-        obs = add_batch(obs)
+        # Make advice
+        obs["advice"] = self.produce_advice_from_other_processes(obs, p)
 
-        return self.learner.get_advice(obs).cpu().numpy()
+        # Send to the process and receive the action
+        p["last_activity_time"] = time.monotonic()
+        p["to_process"].put({"type": "action", "obs_tuple": (obs, reward, done, info)})
+        response = p["from_process"].get()
 
-    def get_advice(self, obs):
-        """ Ask the threadpool for advice
-        """
-        return self.pool.get_advice(obs, self)
+        assert done == ("return" in response)
 
-    def run(self):
-        # Check if there is an already existing model to be loaded
-        model = get_latest_model(self.save_name)
-        
-        self.native_id = threading.current_thread().ident
+        if "return" in response:
+            # The episode finished. Log it, then mark the process as available
+            log_entry = EpisodeReturn()
+            log_entry.agent = self.agent
+            log_entry.ret = response["return"]
+            log_entry.save()
 
-        if model != None:
-            print("LOADING", model)
+            # Reset cumulative_reward for the next episode
+            p["available"] = True
+            p["owner_session"] = None
 
-            try:
-                self.learner.load(model)
-            except:
-                print("Unable to load saved model, the agent's config may have changed in the database")
-
-        # Run the learner
-        self.learner.learn(total_timesteps=100000000, callback = self.checkpoint_callback) # TODO while true instead of fixed number timesteps
-        print('My thread died')
-        return None
-
-
-def action_to_json(a):
-    if isinstance(a, np.ndarray):
-        return a.tolist()
-    else:
-        return int(a)
+        return response["action"]
 
 def shepherd_wrap(view):
     """ This is what allows a Shepherd server to answer JSON queries from Javascript pages on different servers.
@@ -298,7 +245,7 @@ def shepherd_wrap(view):
 @csrf_exempt
 @shepherd_wrap
 def login_user(request):
-    global ALL_THREADS, THREAD_POOLS, LOCK, SESSIONS
+    global PROCESS_POOLS, SESSIONS
 
     data = json.loads(request.body)
 
@@ -314,19 +261,22 @@ def login_user(request):
     # Create a pool for the agent_id if necessary
     agent_id = agent.id
 
-    with LOCK:
-        if agent_id not in THREAD_POOLS:
-            THREAD_POOLS[agent_id] = AgentThreadPool(str_to_json(agent.observation_space), str_to_json(agent.action_space), agent)
+    if agent_id not in PROCESS_POOLS:
+        PROCESS_POOLS[agent_id] = AgentProcessPool(
+            str_to_json(agent.observation_space),
+            str_to_json(agent.action_space),
+            agent
+        )
 
-        thread_pool = THREAD_POOLS[agent_id]
+    pool = PROCESS_POOLS[agent_id]
 
-        # Allocate a thread for the client
-        agent_thread = thread_pool.allocate_thread()
-        thread_id = agent_thread.thread_id
+    # Allocate a thread for the client
+    p = pool.allocate_process()
+    pid = p["id"]
 
     session_key = str(uuid.uuid4())
     session = {
-        'thread_id': thread_id,
+        'process_id': pid,
         'agent_id': agent_id
     }
     SESSIONS[session_key] = session
@@ -336,9 +286,6 @@ def login_user(request):
 @csrf_exempt
 @shepherd_wrap
 def env(request):
-    global ALL_THREADS
-    global BEGINNING_OF_TIMES
-
     data = json.loads(request.body)
 
     # Load the session from the session_key in the request
@@ -352,63 +299,36 @@ def env(request):
 
     session = SESSIONS[session_key]
 
-    # Find the thread
-    thread_id = session['thread_id']
+    # Find the worker process
+    pid = session['process_id']
     agent_id = session['agent_id']
 
     try:
-        with LOCK:
-            pool = THREAD_POOLS[agent_id]
-            thread = pool.get_thread_for_session(thread_id, data['session_key'])
-            thread_id = thread.thread_id
+        pool = PROCESS_POOLS[agent_id]
+        p = pool.get_process_for_session(pid, data['session_key'])
+        pid = p["id"]
 
-        session['thread_id'] = thread_id
+        session['process_id'] = pid
     except KeyError:
         raise Exception("Could not find thread in the current threads pool")
     
-    # all of this for user time quota management
-    
-    current_time = time.monotonic()
-    general_time_spent_running = current_time - BEGINNING_OF_TIMES
-    compute_time_of_this_agent = 0.0
-    for t in pool.threads:
-        compute_time_of_this_agent += t.time_spent_in_agent
-    percentage_of_time_used_by_this_agent = compute_time_of_this_agent / general_time_spent_running    
-    
-    if percentage_of_time_used_by_this_agent > settings.TIME_PERCENTAGE_ALLOWED_PER_AGENT:
-        raise Exception("Agent is consuming more compute time than allowed. CPU usage = %f cpu seconds per wall-clock seconds" % percentage_of_time_used_by_this_agent)
-    
-    if general_time_spent_running > settings.RESET_TIME_COUNTER: # reset counters every 5 minutes or so
-        BEGINNING_OF_TIMES = time.monotonic()
-        for t in pool.threads:
-            t.time_spent_in_agent = 0.0
+    # Time quota management (TODO: use psutil to sum the CPU time of every worker processes of an agent over a specific period)
+    # if not pool.meets_cputime_quota():
+    #     raise Exception("CPU time quota exceeded. Please re-try this request in a few moments")
 
-    # Send the observation to the thread
-    thread.q_obs.put((
-       np.array(data['obs']), data['reward'], data['done'], data['info']
-    ))
+    # Ask the process for an action
+    action = pool.get_action_from_process(
+        p,
+        np.array(data['obs']),
+        data['reward'],
+        data['done'],
+        data['info']
+    )
 
-    # Update the activity time of the thread, and cleanup stale threads
-    thread.last_activity_time = time.monotonic()
+    # Cleanup the processes
+    pool.cleanup_processes()
 
-    with LOCK:
-        pool.cleanup_threads()
-
-    # log episode returns to plot learning curves
-    thread.cumulative_reward += data['reward']
-
-    if data['done']:
-        thread.finish_episode()
-
-    # The learner will have produced an action
-    # if done=True, the episode has ended and the environment on the client side must be reset for a new episode to begin
-    if data['done']:
-        action = None
-    else:
-        action = action_to_json(thread.q_actions.get())
-
-    return JsonResponse({'action': action})
-
+    return JsonResponse({'action': action_to_json(action)})
 
 # http://localhost:5000/shepherd/send_curve/?agent_id=1
 @login_required
@@ -433,7 +353,6 @@ def send_curve(request):
 
     for ret in ep_returns:
         returns.append(ret.ret)
-        #print(ret.ret, ret.datetime)
 
     # save plot in an in-memory file
     plot = plt.figure()
@@ -476,8 +395,6 @@ def generate_zip(request):
     with open(zipname, 'rb') as f:
         return HttpResponse(f, headers={'Content-Type': 'application/zip', 'Content-Disposition': 'attachment; filename="' + savename + '.zip"'})
     
-    
-
 @login_required
 def get_how_much_time_since_last_time(request):
     """ Show how much time passed since last touching this agent on the admin site, by retrieving the last time of edition of the agent's model zip file.
@@ -511,7 +428,7 @@ def get_how_much_time_since_last_time(request):
     seconds_since_edit = current_time - zip_time
     delta = datetime.timedelta(seconds=seconds_since_edit)
     
-    return wrap_response(HttpResponse(str(delta) + ' ago, on ' + datetime.datetime.fromtimestamp(zip_time).strftime('%d/%m/%Y %H:%M:%S'), content_type='text/html; charset=UTF-8'))
+    return HttpResponse(str(delta) + ' ago, on ' + datetime.datetime.fromtimestamp(zip_time).strftime('%d/%m/%Y %H:%M:%S'), content_type='text/html; charset=UTF-8')
 
 
 

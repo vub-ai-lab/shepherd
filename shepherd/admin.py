@@ -10,24 +10,24 @@ def only_own(s, request, **kwargs):
 
     return qs.filter(**kwargs)
 
+class ParameterValueInline(admin.TabularInline):
+    model = ParameterValue
+    extra = 1
+
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        if db_field.name == "param":
+            # List per algorithm
+            kwargs["queryset"] = Parameter.objects.order_by('algo')
+
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
+
 class AgentAdmin(admin.ModelAdmin):
     readonly_fields = ['learning_curve', 'latest_agent_model_zip_file', 'creation_time', 'last_activity_time']
+    inlines = (ParameterValueInline,)
 
     # Normal users only see their own agents
     def get_queryset(self, request):
         return only_own(super(), request, owner=request.user)
-
-class ParameterValueAdmin(admin.ModelAdmin):
-    # Normal users can only change the parameters of their own agents
-    def formfield_for_foreignkey(self, db_field, request, **kwargs):
-        if db_field.name == 'agent' and not request.user.is_superuser:
-            return ModelChoiceField(queryset=Agent.objects.filter(owner=request.user))
-
-        return super().formfield_for_foreignkey(db_field, request, **kwargs)
-
-    # Normal users only see their own agents
-    def get_queryset(self, request):
-        return only_own(super(), request, agent__owner=request.user)
 
 class APIKeyAdmin(admin.ModelAdmin):
     # Normal users only see their own agents
@@ -39,4 +39,3 @@ admin.site.register(Agent, AgentAdmin)
 admin.site.register(APIKey, APIKeyAdmin)
 admin.site.register(EpisodeReturn)
 admin.site.register(Parameter)
-admin.site.register(ParameterValue, ParameterValueAdmin)

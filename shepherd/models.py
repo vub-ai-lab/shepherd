@@ -11,6 +11,23 @@ class Algorithm(models.Model):
     def __str__(self):
         return self.name
 
+class Parameter(models.Model):
+    class ParamType(models.IntegerChoices):
+        BOOL = 1
+        INT = 2
+        FLOAT = 3
+        STR = 4
+
+    name = models.CharField("name given to the parameter", max_length=32)
+    algo = models.ForeignKey(Algorithm, on_delete=models.CASCADE, verbose_name="Algorithm that has this parameter")
+    t = models.IntegerField(choices=ParamType.choices, verbose_name="Type of the parameter")
+
+    default_value = models.CharField(max_length=64, null=True)
+
+    def __str__(self):
+        return self.algo.name + ': ' + self.name + ' (' + self.get_t_display() + ')'
+
+
 class Agent(models.Model):
     owner = models.ForeignKey(User, on_delete=models.CASCADE, verbose_name="user that owns this agent", help_text="The owner of an agent is the user/client of Shepherd.")
     algo = models.ForeignKey(Algorithm, null=True, on_delete=models.SET_NULL, verbose_name="RL algorithm executed by this agent", help_text="Reinforcement Learning algorithm that the agent is running (for instance, PPO, SAC, BDPI, etc).")
@@ -21,6 +38,8 @@ class Agent(models.Model):
     creation_time = models.DateTimeField('Creation of the agent', auto_now_add=True)
     last_activity_time = models.DateTimeField('Date of last usage of the agent', auto_now_add=True)
     max_percent_cpu_usage = models.FloatField('Maximum CPU usage in percentage points (100.0 = 1 full CPU used every one-minute interval)', default=100.0)
+
+    parameters = models.ManyToManyField(Parameter, through='ParameterValue', help_text="Parameters used to configure the learning algorithm used by the agent")
 
     def learning_curve(self):
         img_tag = '<img id=\"learning_curve\" src="/shepherd/send_curve/?agent_id=%s&">' % self.id
@@ -68,32 +87,10 @@ class APIKey(models.Model):
     def __str__(self):
         return self.key + " for agent " + str(self.agent)
 
-class Parameter(models.Model):
-    class ParamType(models.IntegerChoices):
-        BOOL = 1
-        INT = 2
-        FLOAT = 3
-        STR = 4
-
-    name = models.CharField("name given to the parameter", max_length=32)
-    algo = models.ForeignKey(Algorithm, on_delete=models.CASCADE, verbose_name="Algorithms that has this parameter")
-    t = models.IntegerField(choices=ParamType.choices, verbose_name="Type of the parameter")
-
-    value_bool = models.BooleanField(null=True)
-    value_int = models.IntegerField(null=True)
-    value_float = models.FloatField(null=True)
-    value_str = models.CharField(max_length=64, null=True)
-
-    def __str__(self):
-        return self.name + ' of type ' + self.get_t_display() + ' for algorithm ' + self.algo.name
-
 class ParameterValue(models.Model):
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, verbose_name="Agent for which this parameter has a value")
     param = models.ForeignKey(Parameter, on_delete=models.CASCADE, verbose_name="Parameter set to the value")
-    value_bool = models.BooleanField(null=True)
-    value_int = models.IntegerField(null=True)
-    value_float = models.FloatField(null=True)
-    value_str = models.CharField(max_length=64, null=True)
+    value = models.CharField(max_length=64, null=True)
 
     def __str__(self):
-        return str(self.agent) + ' param ' + self.param.name + '=' + str(self.value_bool) + ' ' + str(self.value_int) + ' ' + str(self.value_float) + ' ' + self.value_str
+        return str(self.agent) + ' param ' + self.param.name + '=' + self.value

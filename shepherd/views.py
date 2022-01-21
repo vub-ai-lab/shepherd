@@ -51,25 +51,25 @@ def get_param_values_from_database(agent):
     """
     Retrieve parameter value for that agent, with that algorithm, either set by the user or the default value of the parameter
     """
-    params = list(Parameter.objects.filter(algo=agent.algo))
-    param_values = list(ParameterValue.objects.filter(agent=agent))
+    param_values = ParameterValue.objects.select_related('param').filter(agent=agent)
 
     arguments = {}
 
-    for param in params:
-        arguments[param.name] = param
-        for i in range(len(param_values)):
-            if param_values[i].param == param:
-                arguments[param.name] = param_values[i]
+    for pv in param_values:
+        key = pv.param.name
+        value = pv.value
 
-        if param.t == 1:
-            arguments[param.name] = arguments[param.name].value_bool
-        elif param.t == 2:
-            arguments[param.name] = arguments[param.name].value_int
-        elif param.t == 3:
-            arguments[param.name] = arguments[param.name].value_float
-        else:
-            arguments[param.name] = arguments[param.name].value_str
+        # Cast the value
+        casts = {
+            Parameter.ParamType.BOOL: bool,
+            Parameter.ParamType.INT: int,
+            Parameter.ParamType.FLOAT: float,
+            Parameter.ParamType.STR: str,
+        }
+
+        value = casts[pv.param.t](value)
+
+        arguments[key] = value
 
     return arguments
 

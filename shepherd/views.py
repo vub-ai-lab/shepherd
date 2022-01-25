@@ -12,6 +12,7 @@ import numpy as np
 import torch as th
 import gym
 import psutil
+import shutil
 
 import ast
 import sys
@@ -419,3 +420,53 @@ def generate_zip(request):
     # Return the zip data
     with open(zipname, 'rb') as f:
         return HttpResponse(f, headers={'Content-Type': 'application/zip', 'Content-Disposition': 'attachment; filename="' + savename + '.zip"'})
+    
+    
+def delete_zip(request):
+    """ Delete all model zip files associated to the user's agent. It's a button on the amdin site.
+    """
+    # Find agent
+    agent_id = request.GET['agent_id']
+
+    # Check that the agent belongs LOCKto the currently logged-in user
+    try:
+        agent = Agent.objects.get(id=agent_id)
+
+        if agent.owner_id != request.user.id and not request.user.is_superuser:
+            raise Http404("No such agent for this user")
+    except Agent.DoesNotExist:
+        raise Http404("Unknown agent")
+
+    # Directory where the zip file is
+    savename = str(agent.owner) + '_' + agent.algo.name + '_' + str(agent.id)
+    try:
+        shutil.rmtree(savename) # deletes the whole directory
+    except FileNotFoundError:
+        raise Http404("No log yet for this agent")
+    
+    return HttpResponse("Zip Deleted!")
+
+    
+def delete_curve(request):
+    """ Delete all episode returns for this agent.
+    """
+    # Find agent
+    agent_id = request.GET['agent_id']
+
+    # Check that the agent belongs LOCKto the currently logged-in user
+    try:
+        agent = Agent.objects.get(id=agent_id)
+
+        if agent.owner_id != request.user.id and not request.user.is_superuser:
+            raise Http404("No such agent for this user")
+    except Agent.DoesNotExist:
+        raise Http404("Unknown agent")
+    
+    
+    # Delete all episode return records for the agent
+    EpisodeReturn.objects.filter(agent_id=agent_id).delete()
+    
+    return HttpResponse("Curve Deleted!")
+
+
+

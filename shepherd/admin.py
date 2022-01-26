@@ -22,7 +22,7 @@ class ParameterValueInline(admin.TabularInline):
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
 class AgentAdmin(admin.ModelAdmin):
-    readonly_fields = ['learning_curve', 'latest_agent_model_zip_file', 'creation_time', 'last_activity_time']
+    readonly_fields = ['learning_curve', 'special_actions', 'creation_time', 'last_activity_time']
     inlines = (ParameterValueInline,)
 
     # Normal users only see their own agents

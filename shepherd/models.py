@@ -59,9 +59,9 @@ window.onload = function() {
 
         return mark_safe(img_tag + refresh)
 
-    def latest_agent_model_zip_file(self):
+    def special_actions(self):
         return format_html(
-            '<a href="/shepherd/generate_zip/?agent_id=%s">Download ZIP (if it exists)</a> <a href=\"/shepherd/delete_zip/?agent_id=%s\">Delete ZIP</a> <a href=\"/shepherd/delete_curve/?agent_id=%s\">Delete learning curve</a>' % (self.id, self.id, self.id)
+            '<a href="/shepherd/generate_zip/?agent_id=%s">Download ZIP (if it exists)</a> &bull; <a href=\"/shepherd/delete_zip/?agent_id=%s\">Delete ZIP</a> &bull; <a href=\"/shepherd/delete_curve/?agent_id=%s\">Delete learning curve</a>' % (self.id, self.id, self.id)
         )
 
     def __str__(self):
@@ -89,7 +89,7 @@ class APIKey(models.Model):
 
 class ParameterValue(models.Model):
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, verbose_name="Agent for which this parameter has a value")
-    param = models.ForeignKey(Parameter, on_delete=models.CASCADE, verbose_name="Parameter set to the value")
+    param = models.ForeignKey(Parameter, on_delete=models.CASCADE, verbose_name="Parameter")
     value = models.CharField(max_length=64, null=True)
 
     def __str__(self):

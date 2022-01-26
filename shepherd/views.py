@@ -2,8 +2,9 @@ from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.models import User # import the database classes
 from django.contrib.auth import authenticate, login
 from django.contrib.auth.decorators import login_required
+from django.contrib import messages
 from django.shortcuts import render
-from django.http import JsonResponse, HttpResponse, Http404
+from django.http import JsonResponse, HttpResponse, HttpResponseRedirect, Http404
 from django.conf import settings
 from django.utils import timezone
 
@@ -356,15 +357,9 @@ def env(request):
 
     return JsonResponse({'action': action_to_json(action)})
 
-# http://localhost:5000/shepherd/send_curve/?agent_id=1
-@login_required
-def send_curve(request):
-    """ Show the agent's learning curve on the admin site.
-    """
-    # Find agent
+def get_agent_for_request(request):
     agent_id = request.GET['agent_id']
 
-    # Check that the agent belongs to the currently logged-in user
     try:
         agent = Agent.objects.get(id=agent_id)
 
@@ -373,8 +368,18 @@ def send_curve(request):
     except Agent.DoesNotExist:
         raise Http404("Unknown agent")
 
+    return agent
+
+# http://localhost:5000/shepherd/send_curve/?agent_id=1
+@login_required
+def send_curve(request):
+    """ Show the agent's learning curve on the admin site.
+    """
+    # Find agent
+    agent = get_agent_for_request(request)
+
     # Select returns for the agent
-    ep_returns = EpisodeReturn.objects.filter(agent_id=agent_id)
+    ep_returns = EpisodeReturn.objects.filter(agent=agent)
     returns = [] # actual floats
 
     for ret in ep_returns:
@@ -399,16 +404,7 @@ def generate_zip(request):
     """ Make the latest agent's model zip file available for download on the amdin site.
     """
     # Find agent
-    agent_id = request.GET['agent_id']
-
-    # Check that the agent belongs LOCKto the currently logged-in user
-    try:
-        agent = Agent.objects.get(id=agent_id)
-
-        if agent.owner_id != request.user.id and not request.user.is_superuser:
-            raise Http404("No such agent for this user")
-    except Agent.DoesNotExist:
-        raise Http404("Unknown agent")
+    agent = get_agent_for_request(request)
 
     # Directory where the zip file is
     savename = str(agent.owner) + '_' + agent.algo.name + '_' + str(agent.id)
@@ -422,51 +418,37 @@ def generate_zip(request):
         return HttpResponse(f, headers={'Content-Type': 'application/zip', 'Content-Disposition': 'attachment; filename="' + savename + '.zip"'})
     
     
+@login_required
 def delete_zip(request):
     """ Delete all model zip files associated to the user's agent. It's a button on the amdin site.
     """
     # Find agent
-    agent_id = request.GET['agent_id']
-
-    # Check that the agent belongs LOCKto the currently logged-in user
-    try:
-        agent = Agent.objects.get(id=agent_id)
-
-        if agent.owner_id != request.user.id and not request.user.is_superuser:
-            raise Http404("No such agent for this user")
-    except Agent.DoesNotExist:
-        raise Http404("Unknown agent")
+    agent = get_agent_for_request(request)
 
     # Directory where the zip file is
     savename = str(agent.owner) + '_' + agent.algo.name + '_' + str(agent.id)
+
     try:
         shutil.rmtree(savename) # deletes the whole directory
+        messages.add_message(request, messages.SUCCESS, "ZIP files removed.")
     except FileNotFoundError:
-        raise Http404("No log yet for this agent")
+        messages.add_message(request, messages.INFO, "No ZIP files for this agent yet, so none deleted.")
     
-    return HttpResponse("Zip Deleted!")
+    return HttpResponseRedirect("/admin/shepherd/agent/%i/change/" % agent.id)
 
-    
+
+@login_required
 def delete_curve(request):
     """ Delete all episode returns for this agent.
     """
     # Find agent
-    agent_id = request.GET['agent_id']
-
-    # Check that the agent belongs LOCKto the currently logged-in user
-    try:
-        agent = Agent.objects.get(id=agent_id)
-
-        if agent.owner_id != request.user.id and not request.user.is_superuser:
-            raise Http404("No such agent for this user")
-    except Agent.DoesNotExist:
-        raise Http404("Unknown agent")
-    
+    agent = get_agent_for_request(request)
     
     # Delete all episode return records for the agent
-    EpisodeReturn.objects.filter(agent_id=agent_id).delete()
+    EpisodeReturn.objects.filter(agent=agent).delete()
     
-    return HttpResponse("Curve Deleted!")
+    messages.add_message(request, messages.SUCCESS, "Learning curve deleted.")
+    return HttpResponseRedirect("/admin/shepherd/agent/%i/change/" % agent.id)
 
 
 

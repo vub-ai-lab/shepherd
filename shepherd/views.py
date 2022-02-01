@@ -49,6 +49,16 @@ def action_to_json(a):
     else:
         return int(a)
 
+def json_to_observation(json):
+    if isinstance(json, int):
+        return json
+    elif isinstance(json, list):
+        return np.array(json)
+    elif isinstance(json, dict):
+        return {k: json_to_observation(v) for k, v in json.items()}
+    else:
+        raise Exception("Observation obtained from the environment must be an integer, a list of floats or a dictionary of integers or lists of floats. Got " + repr(json))
+
 def get_param_values_from_database(agent):
     """
     Retrieve parameter value for that agent, with that algorithm, either set by the user or the default value of the parameter
@@ -220,10 +230,12 @@ class AgentProcessPool:
         self.agent.last_activity_time = timezone.now()
         self.agent.save()
 
-        # Make a dictionary observation (obs is currently a Numpy array)
-        obs = {"obs": obs}   # See shepherdEnv.py for keys
+        # Make a dictionary observation
+        if not isinstance(obs, dict):
+            # Single-observation environment, force it to be a dictionary to match ShepherdEnv
+            obs = {"obs": obs}   # See shepherdEnv.py for keys
 
-        # Make advice
+        # Add advice to the state
         obs["advice"] = self.produce_advice_from_other_processes(obs, p)
 
         # Send to the process and receive the action
@@ -346,7 +358,7 @@ def env(request):
     # Ask the process for an action
     action = pool.get_action_from_process(
         p,
-        np.array(data['obs']),
+        json_to_observation(data['obs']),
         data['reward'],
         data['done'],
         data['info']

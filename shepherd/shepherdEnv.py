@@ -4,25 +4,24 @@ import numpy as np
 def json_to_space(j):
     if isinstance(j, int):
         return gym.spaces.Discrete(j)
-    elif len(j) == 2:
-        return gym.spaces.Box(
-            np.array(j[0]),
-            np.array(j[1])
-        )
-    elif len(j) == 3:
+    elif isinstance(j, dict):
+        return gym.spaces.Dict({
+            k: json_to_space(v) for k, v in j.items()
+        })
+    elif isinstance(j, list) and len(j) == 3:
         if isinstance(j[1], int):
             dtype = np.uint8   # Integer low, use uint8 (probably an image)
         else:
             dtype = np.float32 # Non-integer low, use float32
 
         return gym.spaces.Box(
-            shape=j[0],
+            shape=tuple(j[0]),
             low=j[1],
             high=j[2],
             dtype=dtype
         )
     else:
-        raise Exception("a space description must be an integer (discrete space), a tuple of (low, high), or a tuple of (shape, low, high)")
+        raise Exception("a space description must be an integer (discrete space), a list of (shape, low, high), or a dictionary of keys to integers or lists.")
 
 class ShepherdEnv(gym.Env):
     def __init__(self, q_obs, q_act, action_space, observation_space):
@@ -35,14 +34,21 @@ class ShepherdEnv(gym.Env):
         if isinstance(self.action_space, gym.spaces.Discrete):
             # Discrete actions, multinomial advice
             advice_shape = (self.action_space.n,)
-        else:
+        elif isinstance(self.action_space, gym.spaces.Box):
             # Continuous actions, mean/std advice
             advice_shape = (2,) + self.action_space.shape
+        else:
+            raise Exception("Actions must be discrete or continuous, not a dictionary")
 
-        self.observation_space = gym.spaces.Dict({
-            'obs': self.observation_space,
-            'advice': gym.spaces.Box(shape=advice_shape, low=0.0, high=1.0)
-        })
+        # Add advice to the observation
+        if not isinstance(self.observation_space, gym.spaces.Dict):
+            # Force MultiInput observations, even if the environment provides a single observation
+            self.observation_space = gym.spaces.Dict({
+                "obs": self.observation_space
+            })
+
+        self.observation_space.spaces["advice"] = gym.spaces.Box(shape=advice_shape, low=0.0, high=1.0)
+        print("Observation space", self.observation_space)
                
     def reset(self):
         """ Reset the environment and return the initial state

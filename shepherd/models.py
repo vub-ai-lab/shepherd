@@ -31,6 +31,7 @@ class Parameter(models.Model):
 class Agent(models.Model):
     owner = models.ForeignKey(User, on_delete=models.CASCADE, verbose_name="user that owns this agent", help_text="The owner of an agent is the user/client of Shepherd.")
     algo = models.ForeignKey(Algorithm, null=True, on_delete=models.SET_NULL, verbose_name="RL algorithm executed by this agent", help_text="Reinforcement Learning algorithm that the agent is running (for instance, PPO, SAC, BDPI, etc).")
+    name = models.CharField("Descriptive name given to the agent", max_length=128)
 
     action_space = models.TextField('Action space JSON', help_text="Syntax: either an integer like \"4\", indicating a discrete number of actions (integers from 0 to 3); a list of 3 elements (shape, low, high) like \"[[28], 0.0, 1.0]\" indicating a continuous action made of a list of 28 floating-point numbers between 0 and 1; or a dictionary (see Observation Space JSON, as it is only used for observations)")
     observation_space = models.TextField('Observation space JSON', help_text="Same syntax as Action Space JSON. It is also possible to have a dictionary of keys to integers or lists (as described above), for environments that produce readings from multiple sensors, such as 16 distance sensors and an 80x80 color camera: {\"distance\": [[16], 0.0, 1.0], \"camera\": [[80, 80, 3], 0, 255]}.")
@@ -72,7 +73,7 @@ window.onload = function() {
         )
 
     def __str__(self):
-        return str(self.id) + ': ' + ('(none)' if self.algo is None else self.algo.name) + ' agent of ' + self.owner.username
+        return f"{self.id} of {self.owner.username}: {self.name}"
 
 class EpisodeReturn(models.Model):
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, verbose_name="Agent")

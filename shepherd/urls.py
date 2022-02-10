@@ -9,4 +9,5 @@ urlpatterns = [
     path('generate_zip/', views.generate_zip, name='generate_zip'),
     path('delete_zip/', views.delete_zip, name='delete_zip'),
     path('delete_curve/', views.delete_curve, name='delete_curve'),
+    path('kill_processes/', views.kill_processes, name='kill_processes'),
 ] 

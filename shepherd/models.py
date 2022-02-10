@@ -60,8 +60,15 @@ window.onload = function() {
         return mark_safe(img_tag + refresh)
 
     def special_actions(self):
+        id = str(self.id)
+
         return format_html(
-            '<a href="/shepherd/generate_zip/?agent_id=%s">Download ZIP (if it exists)</a> &bull; <a href=\"/shepherd/delete_zip/?agent_id=%s\">Delete ZIP</a> &bull; <a href=\"/shepherd/delete_curve/?agent_id=%s\">Delete learning curve</a>' % (self.id, self.id, self.id)
+            f"""
+            <a href="/shepherd/generate_zip/?agent_id={id}">Download ZIP (if it exists)</a> &bull;
+            <a href="/shepherd/delete_zip/?agent_id={id}">Delete ZIP</a> &bull;
+            <a href="/shepherd/delete_curve/?agent_id={id}">Delete learning curve</a> &bull;
+            <a href="/shepherd/kill_processes/?agent_id={id}">Restart agent</a> (will invalidate session keys)
+            """
         )
 
     def __str__(self):

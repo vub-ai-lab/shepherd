@@ -14,6 +14,11 @@ def json_to_space(j):
         else:
             dtype = np.float32 # Non-integer low, use float32
 
+        if isinstance(j[1], list):
+            j[1] = np.array(j[1])
+        if isinstance(j[2], list):
+            j[2] = np.array(j[2])
+
         return gym.spaces.Box(
             shape=tuple(j[0]),
             low=j[1],

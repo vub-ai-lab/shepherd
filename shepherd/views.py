@@ -89,14 +89,20 @@ class AgentProcessPool:
     """ List of Process instances for a particular agent_id. Used to produce advice
     """
 
-    def __init__(self, observation_space, action_space, agent):
+    def __init__(self, agent):
         self.processes = []
-        self.observation_space = observation_space
-        self.action_space = action_space
         self.agent = agent
 
         self.last_time_quota_checked = time.monotonic()
         self.meets_quota = True
+
+        self.load_spaces_from_db()
+
+    def load_spaces_from_db(self):
+        self.agent.refresh_from_db()
+
+        self.observation_space = str_to_json(self.agent.observation_space)
+        self.action_space = str_to_json(self.agent.action_space)
 
     def meets_cputime_quota(self):
         if (time.monotonic() - self.last_time_quota_checked) > 60.:
@@ -106,7 +112,7 @@ class AgentProcessPool:
             for p in self.processes:
                 total_percent += p["psutil"].cpu_percent()
 
-            print(total_percent)
+            self.agent.refresh_from_db()
             self.meets_quota = (total_percent < self.agent.max_percent_cpu_usage)
 
         return self.meets_quota
@@ -156,7 +162,11 @@ class AgentProcessPool:
             case that this process has already been re-used by another session, in
             which case a new process has to be allocated for this session.
         """
-        p = self.processes[id]
+        if id >= len(self.processes):
+            # Processes got cleared, need to create a new one
+            p = self.allocate_process()
+        else:
+            p = self.processes[id]
 
         if (p["owner_session"] is not None) and (p["owner_session"] != session_key):
             # The thread has been given to another session, get another one
@@ -184,6 +194,20 @@ class AgentProcessPool:
                 del self.processes[i]
             else:
                 i += 1
+
+    def kill_processes(self):
+        """ Kill all the processes in this pool, useful when the Agent object has changed in the database.
+        """
+        for p in self.processes:
+            p["to_process"].put({"type": "stop"})
+
+        for p in self.processes:
+            p["process"].join()
+
+        self.processes.clear()
+
+        # Reload the agent
+        self.load_spaces_from_db()
 
     def produce_advice_from_other_processes(self, obs, current_process):
         """ Ask all the threads to produce an advice vector for observation obs
@@ -301,11 +325,7 @@ def login_user(request):
     agent_id = agent.id
 
     if agent_id not in PROCESS_POOLS:
-        PROCESS_POOLS[agent_id] = AgentProcessPool(
-            str_to_json(agent.observation_space),
-            str_to_json(agent.action_space),
-            agent
-        )
+        PROCESS_POOLS[agent_id] = AgentProcessPool(agent)
 
     pool = PROCESS_POOLS[agent_id]
 
@@ -428,8 +448,13 @@ def generate_zip(request):
     # Return the zip data
     with open(zipname, 'rb') as f:
         return HttpResponse(f, headers={'Content-Type': 'application/zip', 'Content-Disposition': 'attachment; filename="' + savename + '.zip"'})
-    
-    
+
+def go_back_to_admin_with_message(request, message):
+    if message is not None:
+        messages.add_message(request, messages.SUCCESS, message)
+
+    return HttpResponseRedirect("/admin/shepherd/agent/%s/change/" % request.GET['agent_id'])
+
 @login_required
 def delete_zip(request):
     """ Delete all model zip files associated to the user's agent. It's a button on the amdin site.
@@ -446,8 +471,7 @@ def delete_zip(request):
     except FileNotFoundError:
         messages.add_message(request, messages.INFO, "No ZIP files for this agent yet, so none deleted.")
     
-    return HttpResponseRedirect("/admin/shepherd/agent/%i/change/" % agent.id)
-
+    return go_back_to_admin_with_message(request, None)
 
 @login_required
 def delete_curve(request):
@@ -459,8 +483,19 @@ def delete_curve(request):
     # Delete all episode return records for the agent
     EpisodeReturn.objects.filter(agent=agent).delete()
     
-    messages.add_message(request, messages.SUCCESS, "Learning curve deleted.")
-    return HttpResponseRedirect("/admin/shepherd/agent/%i/change/" % agent.id)
+    return go_back_to_admin_with_message(request,  "Learning curve deleted.")
 
+@login_required
+def kill_processes(request):
+    """ Kill all the processes for this agent
+    """
+    agent = get_agent_for_request(request)
+    agent_id = agent.id
 
+    try:
+        pool = PROCESS_POOLS[agent_id]
+        pool.kill_processes()
+    except KeyError:
+        pass
 
+    return go_back_to_admin_with_message(request, "Agent re-started. Any client will need to obtain a new session key.")

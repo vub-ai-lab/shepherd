@@ -114,6 +114,7 @@ class AgentProcessPool:
 
             self.agent.refresh_from_db()
             self.meets_quota = (total_percent < self.agent.max_percent_cpu_usage)
+            self.last_time_quota_checked = time.monotonic()
 
         return self.meets_quota
 

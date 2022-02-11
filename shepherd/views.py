@@ -381,7 +381,7 @@ def env(request):
         json_to_observation(data['obs']),
         data['reward'],
         data['done'],
-        data['info']
+        data.get('info', {})
     )
 
     # Cleanup the processes

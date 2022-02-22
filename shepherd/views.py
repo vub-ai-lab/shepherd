@@ -89,10 +89,9 @@ class AgentProcessPool:
     """ List of Process instances for a particular agent_id. Used to produce advice
     """
 
-    def __init__(self, agent, evaluate):
+    def __init__(self, agent):
         self.processes = []
         self.agent = agent
-        self.evaluate = evaluate
 
         self.last_time_quota_checked = time.monotonic()
         self.meets_quota = True
@@ -140,7 +139,7 @@ class AgentProcessPool:
             self.agent.algo.name,
             get_param_values_from_database(self.agent),
             str(self.agent.owner) + '_' + self.agent.algo.name + '_' + str(self.agent.id),
-            self.evaluate
+            not self.agent.enable_learning
         )
 
         self.processes.append({
@@ -324,13 +323,11 @@ def login_user(request):
     except APIKey.DoesNotExist:
         raise Exception("API Key not found in the database")
 
-    evaluate = data['evaluate']
-
     # Create a pool for the agent_id if necessary
     agent_id = agent.id
 
     if agent_id not in PROCESS_POOLS:
-        PROCESS_POOLS[agent_id] = AgentProcessPool(agent, evaluate)
+        PROCESS_POOLS[agent_id] = AgentProcessPool(agent)
 
     pool = PROCESS_POOLS[agent_id]
 

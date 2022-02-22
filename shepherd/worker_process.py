@@ -91,7 +91,6 @@ class WorkerThread(threading.Thread):
 
         # Save a checkpoint every X steps
         self.save_name = log_name
-
         self.evaluate = evaluate
 
         self.checkpoint_callback = CheckpointCallback(
@@ -137,10 +136,7 @@ class WorkerThread(threading.Thread):
 
         if self.evaluate:
             print("Evaluating policy")
-            result = evaluate_policy(self.learner, self.env, n_eval_episodes=1, return_episode_rewards=True)
-            episode_returns, episode_length_in_timesteps = result
-
-            print("EPISODE_RETURNS ", episode_returns)
+            evaluate_policy(self.learner, self.env, n_eval_episodes=100000000, return_episode_rewards=False)
 
         else:
             # Run the learner

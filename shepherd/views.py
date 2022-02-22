@@ -14,6 +14,7 @@ import torch as th
 import gym
 import psutil
 import shutil
+import csv
 
 import ast
 import sys
@@ -486,6 +487,33 @@ def delete_curve(request):
     EpisodeReturn.objects.filter(agent=agent).delete()
 
     return go_back_to_admin_with_message(request,  "Learning curve deleted.")
+
+@login_required
+def export_curve_CSV(request):
+    """ Export curve in CSV file to be downloaded on the admin site.
+    """
+    # Find agent
+    agent = get_agent_for_request(request)
+
+    # Select returns for the agent
+    ep_returns = EpisodeReturn.objects.filter(agent=agent)
+    returns = [] # actual floats
+
+    for ret in ep_returns:
+        returns.append(ret.ret)
+
+        # Create the HttpResponse object with the appropriate CSV header.
+    response = HttpResponse(
+        content_type='text/csv',
+        headers={'Content-Disposition': 'attachment; filename="curve.csv"'},
+    )
+
+    writer = csv.writer(response)
+    writer.writerow(['episode', 'reward'])
+    for i in range(len(returns)):
+        writer.writerow([str(i), str(returns[i])])
+
+    return response
 
 @login_required
 def kill_processes(request):

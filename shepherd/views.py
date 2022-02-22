@@ -89,9 +89,10 @@ class AgentProcessPool:
     """ List of Process instances for a particular agent_id. Used to produce advice
     """
 
-    def __init__(self, agent):
+    def __init__(self, agent, evaluate):
         self.processes = []
         self.agent = agent
+        self.evaluate = evaluate
 
         self.last_time_quota_checked = time.monotonic()
         self.meets_quota = True
@@ -138,7 +139,8 @@ class AgentProcessPool:
             self.observation_space,
             self.agent.algo.name,
             get_param_values_from_database(self.agent),
-            str(self.agent.owner) + '_' + self.agent.algo.name + '_' + str(self.agent.id)
+            str(self.agent.owner) + '_' + self.agent.algo.name + '_' + str(self.agent.id),
+            self.evaluate
         )
 
         self.processes.append({
@@ -322,11 +324,13 @@ def login_user(request):
     except APIKey.DoesNotExist:
         raise Exception("API Key not found in the database")
 
+    evaluate = data['evaluate']
+
     # Create a pool for the agent_id if necessary
     agent_id = agent.id
 
     if agent_id not in PROCESS_POOLS:
-        PROCESS_POOLS[agent_id] = AgentProcessPool(agent)
+        PROCESS_POOLS[agent_id] = AgentProcessPool(agent, evaluate)
 
     pool = PROCESS_POOLS[agent_id]
 
@@ -371,7 +375,7 @@ def env(request):
         session['process_id'] = pid
     except KeyError:
         raise Exception("Could not find thread in the current threads pool")
-    
+
     # Time quota management
     if not pool.meets_cputime_quota():
         raise Exception("CPU time quota exceeded. Please re-try this request in a few moments")
@@ -471,7 +475,7 @@ def delete_zip(request):
         messages.add_message(request, messages.SUCCESS, "ZIP files removed.")
     except FileNotFoundError:
         messages.add_message(request, messages.INFO, "No ZIP files for this agent yet, so none deleted.")
-    
+
     return go_back_to_admin_with_message(request, None)
 
 @login_required
@@ -480,10 +484,10 @@ def delete_curve(request):
     """
     # Find agent
     agent = get_agent_for_request(request)
-    
+
     # Delete all episode return records for the agent
     EpisodeReturn.objects.filter(agent=agent).delete()
-    
+
     return go_back_to_admin_with_message(request,  "Learning curve deleted.")
 
 @login_required

@@ -10,6 +10,8 @@ sys.path.insert(0, os.path.abspath(__file__ + '/../../stable-baselines3/'))
 from stable_baselines3 import A2C, DDPG, DQN, HER, PPO, SAC, TD3
 from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.utils import obs_as_tensor
+from stable_baselines3.common.evaluation import evaluate_policy
+
 
 from .shepherdEnv import ShepherdEnv
 
@@ -38,20 +40,20 @@ def get_latest_model(save_name):
 
     return latest_model
 
-def spawn_worker_process(to_process, from_process, action_space, observation_space, algorithm, algorithm_kwargs, log_name):
+def spawn_worker_process(to_process, from_process, action_space, observation_space, algorithm, algorithm_kwargs, log_name, evaluate):
     p = multiprocessing.Process(target=worker_process_fun, args=
-        (to_process, from_process, action_space, observation_space, algorithm, algorithm_kwargs, log_name)
+        (to_process, from_process, action_space, observation_space, algorithm, algorithm_kwargs, log_name, evaluate)
     )
 
     p.start()
     return p
 
-def worker_process_fun(to_process, from_process, action_space, observation_space, algorithm, algorithm_kwargs, log_name):
+def worker_process_fun(to_process, from_process, action_space, observation_space, algorithm, algorithm_kwargs, log_name, evaluate):
     # Spawn the worker thread
     q_obs = queue.Queue()
     q_act = queue.Queue()
 
-    worker_thread = WorkerThread(q_obs, q_act, action_space, observation_space, algorithm, algorithm_kwargs, log_name)
+    worker_thread = WorkerThread(q_obs, q_act, action_space, observation_space, algorithm, algorithm_kwargs, log_name, evaluate)
     worker_thread.start()
 
     # Listen for request from the Shepherd server, and process them
@@ -81,7 +83,7 @@ def worker_process_fun(to_process, from_process, action_space, observation_space
         from_process.put(response)
 
 class WorkerThread(threading.Thread):
-    def __init__(self, q_obs, q_act, action_space, observation_space, algorithm, algorithm_kwargs, log_name):
+    def __init__(self, q_obs, q_act, action_space, observation_space, algorithm, algorithm_kwargs, log_name, evaluate):
         super().__init__()
 
         # Make the Gym environment
@@ -89,6 +91,8 @@ class WorkerThread(threading.Thread):
 
         # Save a checkpoint every X steps
         self.save_name = log_name
+
+        self.evaluate = evaluate
 
         self.checkpoint_callback = CheckpointCallback(
             save_freq=algorithm_kwargs.get('save_freq', 1000),
@@ -131,6 +135,14 @@ class WorkerThread(threading.Thread):
             except:
                 print("Unable to load saved model, the agent's config may have changed in the database")
 
-        # Run the learner
-        self.learner.learn(total_timesteps=100000000, callback = self.checkpoint_callback) # TODO while true instead of fixed number timesteps
-        print('My thread died')
+        if self.evaluate:
+            print("Evaluating policy")
+            result = evaluate_policy(self.learner, self.env, n_eval_episodes=1, return_episode_rewards=True)
+            episode_returns, episode_length_in_timesteps = result
+
+            print("EPISODE_RETURNS ", episode_returns)
+
+        else:
+            # Run the learner
+            self.learner.learn(total_timesteps=100000000, callback = self.checkpoint_callback) # TODO while true instead of fixed number timesteps
+            print('My thread died')

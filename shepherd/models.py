@@ -69,6 +69,7 @@ window.onload = function() {
             <a href="/shepherd/generate_zip/?agent_id={id}">Download ZIP (if it exists)</a> &bull;
             <a href="/shepherd/delete_zip/?agent_id={id}">Delete ZIP</a> &bull;
             <a href="/shepherd/delete_curve/?agent_id={id}">Delete learning curve</a> &bull;
+            <a href="/shepherd/export_curve_CSV/?agent_id={id}">Export curve CSV</a> &bull;
             <a href="/shepherd/kill_processes/?agent_id={id}">Restart agent</a> (will invalidate session keys)
             """
         )

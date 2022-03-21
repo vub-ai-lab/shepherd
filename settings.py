@@ -24,7 +24,7 @@ SECRET_KEY = 'django-insecure-2uyrzm&oyd*(wf1lscx+0ai_sldqft5v5_4-jn%&idsom^w7ij
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['192.168.178.35', 'localhost', '127.0.0.1', 'steckdenis.be']
+ALLOWED_HOSTS = ['*']
 
 # reset time counters every 6 seconds, used for user time quotas
 RESET_TIME_COUNTER = 0.1 * 60

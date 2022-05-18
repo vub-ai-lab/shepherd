@@ -1,3 +1,17 @@
+# This file is part of Shepherd.
+#
+# Shepherd is free software: you can redistribute it and/or modify it under the
+# terms of the GNU Affero General Public License as published by the Free
+# Software Foundation, either version 3 of the License, or (at your option) any
+# later version.
+#
+# Shepherd is distributed in the hope that it will be useful, but WITHOUT ANY
+# WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
+# A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with Shepherd. If not, see <https://www.gnu.org/licenses/>.
+
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.models import User # import the database classes
 from django.contrib.auth import authenticate, login
@@ -297,7 +311,7 @@ def shepherd_wrap(view):
             stacktrace = traceback.format_exc()
             response = JsonResponse({'ok': False, 'error': str(e), 'traceback': stacktrace})
 
-        response["Access-Control-Allow-Origin"] = "https://steckdenis.be"
+        response["Access-Control-Allow-Origin"] = "*"
         response["Access-Control-Allow-Credentials"] = "true"
         response["Access-Control-Allow-Methods"] = "POST, OPTIONS"
         response["Access-Control-Max-Age"] = "1000"

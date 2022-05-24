@@ -1,6 +1,6 @@
 # This file is part of Shepherd.
 #
-# Copyright 2022 Hélène Plisnier
+# Copyright 2022 the VU Brussels AI Lab, applied AI and consulting department, ai.vub.ac.be
 #
 # Shepherd is free software: you can redistribute it and/or modify it under the
 # terms of the GNU Affero General Public License as published by the Free

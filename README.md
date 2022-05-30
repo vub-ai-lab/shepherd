@@ -1,6 +1,6 @@
 # Distributed Reinforcement Learning over HTTP
 
-Shepherd is a web application that allows to do [Reinforcement Learning](https://en.wikipedia.org/wiki/Reinforcement_learning) in the field, with the agent being remotely accessed through the web.
+Shepherd is a web application that allows to do [Reinforcement Learning](https://en.wikipedia.org/wiki/Reinforcement_learning) in the field, with the agent being remotely accessed through the web. [Documentation](https://helepli-shepherd-docs.readthedocs.io/en/latest/)
 
 Use-cases:
 
@@ -20,6 +20,8 @@ The main property of Shepherd is that replicas of a single environment can all l
 
 1. For quick technical questions, please drop an email to `denis.steckelmacher@vub.be` (he will try to answer the same day or a few days later)
 2. For closer collaboration, or to schedule a meeting about how we can help you with your potential Reinforcement Learning use-case, plase contact our business developer, `gill.balcaen@vub.be`
+
+[![VUB AI Lab](https://ai.vub.ac.be/wp-content/uploads/2019/08/VUB-AI_RGB-1-800x223.png)](https://ai.vub.ac.be/)
 
 # Installing
 

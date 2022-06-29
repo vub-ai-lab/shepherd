@@ -21,9 +21,6 @@ import requests
 
 import gym
 import numpy as np
-sys.path.append(os.path.abspath(__file__ + '/../..'))
-import gym_envs
-
 
 def send_json_to_website(d, path):
     """ Sends "d", a dictionary, to the website, and returns the response as a Python dictionary

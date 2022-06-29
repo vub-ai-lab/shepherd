@@ -56,47 +56,35 @@ def get_latest_model(save_name):
 
     return latest_model
 
-def spawn_worker_process(to_process, from_process, action_space, observation_space, algorithm, algorithm_kwargs, log_name, evaluate):
+def spawn_worker_process(queues, action_space, observation_space, algorithm, algorithm_kwargs, log_name, evaluate):
     p = multiprocessing.Process(target=worker_process_fun, args=
-        (to_process, from_process, action_space, observation_space, algorithm, algorithm_kwargs, log_name, evaluate)
+        (queues, action_space, observation_space, algorithm, algorithm_kwargs, log_name, evaluate)
     )
 
     p.start()
     return p
 
-def worker_process_fun(to_process, from_process, action_space, observation_space, algorithm, algorithm_kwargs, log_name, evaluate):
-    # Spawn the worker thread
-    q_obs = queue.Queue()
-    q_act = queue.Queue()
-
-    worker_thread = WorkerThread(q_obs, q_act, action_space, observation_space, algorithm, algorithm_kwargs, log_name, evaluate)
+def worker_process_fun(queues, action_space, observation_space, algorithm, algorithm_kwargs, log_name, evaluate):
+    # Spawn the worker thread, that does the learning
+    worker_thread = WorkerThread(queues["act_obs"], queues["act_rsp"], action_space, observation_space, algorithm, algorithm_kwargs, log_name, evaluate)
     worker_thread.start()
 
-    # Listen for request from the Shepherd server, and process them
+    # This (main) thread can now reply to requests for advice
+    adv_obs = queues["adv_obs"]
+    adv_rsp = queues["adv_rsp"]
+
     while True:
-        request = to_process.get()
+        obs = adv_obs.get()
 
-        if request["type"] == "advice":
-            # The Shepherd server wants to get advice from the agent for an observation "obs"
-            obs = request["obs"]
-            response = {"advice": worker_thread.get_probas(obs)}
-        elif request["type"] == "action":
-            # The Shepherd server wants to get an action for an observation. Send it to the worker thread.
-            # NOTE: request["obs_tuple"][0] is the observation (a dict), that contains advice :-) . The Shepherd server is responsible for producing advice and stuffing it in the observations.
-            obs = request["obs_tuple"]
-            response = {}
-
-            if obs[2] == True:
-                response["return"] = worker_thread.last_episode_return() + obs[1]  # Add the reward of the last time-step, not yet in last_episode_return
-
-            q_obs.put(obs)
-            response["action"] = q_act.get()
-        elif request["type"] == "stop":
+        if obs is None:
             # Stop this process
             return
+        else:
+            # The Shepherd server wants to get advice from the agent for an observation "obs"
+            response = worker_thread.get_probas(obs)
 
         # Reply to the Shepherd server
-        from_process.put(response)
+        adv_rsp.put(response)
 
 class WorkerThread(threading.Thread):
     def __init__(self, q_obs, q_act, action_space, observation_space, algorithm, algorithm_kwargs, log_name, evaluate):
@@ -119,10 +107,6 @@ class WorkerThread(threading.Thread):
         algo = ALGORITHMS[algorithm]
         self.learner = algo('MultiInputPolicy', self.env, verbose=1, **algorithm_kwargs)
 
-
-    def last_episode_return(self):
-        return self.env.episode_return
-
     def get_probas(self, obs):
         """ Ask the learner for action probabilities for observation <obs>
         """
@@ -136,7 +120,7 @@ class WorkerThread(threading.Thread):
         obs = obs_as_tensor(obs, self.learner.device)
         obs = add_batch(obs)
 
-        return self.learner.get_advice(obs).cpu().numpy()
+        return self.learner.get_advice(obs).cpu().numpy()[0]
 
     def run(self):
         # Check if there is an already existing model to be loaded

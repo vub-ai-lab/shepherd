@@ -79,7 +79,7 @@ class ShepherdEnv(gym.Env):
         return self.get_state()[0]
         
     def step(self, action):
-        self.q_act.put(action)
+        self.q_act.put({"action": action})
         s = self.get_state()
 
         self.episode_return += s[1]  # state, [reward], done, info
@@ -88,7 +88,7 @@ class ShepherdEnv(gym.Env):
             # The episode finished
             # Emit a "None" action, that allows to balance the number of writes to q_act and reads of q_obs.
             # Reset will read from q_obs but will not write to q_act
-            self.q_act.put(None)
+            self.q_act.put({"action": None, "return": self.episode_return})
 
         return s
 

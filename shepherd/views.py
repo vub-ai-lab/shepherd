@@ -26,14 +26,12 @@ from django.utils import timezone
 
 import json
 import numpy as np
-import torch as th
 import gym
 import psutil
 import shutil
 import csv
 
 import ast
-import sys
 import datetime
 import time
 import io
@@ -41,6 +39,7 @@ import os
 import traceback
 import uuid
 import multiprocessing
+import random
 
 from .models import *
 from .worker_process import get_latest_model, spawn_worker_process
@@ -145,12 +144,15 @@ class AgentProcessPool:
                 return p
 
         # Make a new process, none of the existing ones was available
-        to_process = multiprocessing.Queue()
-        from_process = multiprocessing.Queue()
+        queues = {
+            "act_obs": multiprocessing.Queue(),
+            "act_rsp": multiprocessing.Queue(),
+            "adv_obs": multiprocessing.Queue(),
+            "adv_rsp": multiprocessing.Queue(),
+        }
 
         p = spawn_worker_process(
-            to_process,
-            from_process,
+            queues,
             self.action_space,
             self.observation_space,
             self.agent.algo.name,
@@ -163,8 +165,7 @@ class AgentProcessPool:
             "process": p,
             "psutil": psutil.Process(p.pid),
             "available": False,
-            "to_process": to_process,
-            "from_process": from_process,
+            "queues": queues,
             "owner_session": None,
             "last_activity_time": time.monotonic(),
             "start_time": time.monotonic(),
@@ -207,7 +208,7 @@ class AgentProcessPool:
 
             if (current_time - p["last_activity_time"]) > 30*60:
                 # No activity since 30 minutes
-                p["to_process"].put({"type": "stop"})
+                p["queues"]["adv_obs"].put(None)
                 p["process"].join()
 
                 del self.processes[i]
@@ -218,7 +219,7 @@ class AgentProcessPool:
         """ Kill all the processes in this pool, useful when the Agent object has changed in the database.
         """
         for p in self.processes:
-            p["to_process"].put({"type": "stop"})
+            p["queues"]["adv_obs"].put(None)
 
         for p in self.processes:
             p["process"].join()
@@ -253,18 +254,19 @@ class AgentProcessPool:
 
             return advice
 
-        # Average the received advices (this will average the probability distributions for discrete actions, or the mean/variances for continuous actions)
-        # TODO: For continuous actions, the averaging has no mathematical meaning (and does not increase variance, for instance). We need to find something else to do.
-        advices = [self.get_advice_from_process(p, obs) for p in processes]
-        advice = np.mean(advices, axis=0)
+        # Get advice from a random process
+        p = random.choice(processes)
+        advice = self.get_advice_from_process(p, obs)
 
-        return advice[0]
+        print('got advice with shape', advice)
+
+        return advice
 
     def get_advice_from_process(self, p, obs):
         """ Send a request to the process for advice, and return it
         """
-        p["to_process"].put({"type": "advice", "obs": obs})
-        return p["from_process"].get()["advice"]
+        p["queues"]["adv_obs"].put(obs)
+        return p["queues"]["adv_rsp"].get()
 
     def get_action_from_process(self, p, obs, reward, done, info):
         """ Send an experience to a process and get an action from it
@@ -283,12 +285,12 @@ class AgentProcessPool:
 
         # Send to the process and receive the action
         p["last_activity_time"] = time.monotonic()
-        p["to_process"].put({"type": "action", "obs_tuple": (obs, reward, done, info)})
-        response = p["from_process"].get()
+        p["queues"]["act_obs"].put((obs, reward, done, info))
+        response = p["queues"]["act_rsp"].get()
 
         assert done == ("return" in response)
 
-        if "return" in response:
+        if done:
             # The episode finished. Log it, then mark the process as available
             log_entry = EpisodeReturn()
             log_entry.agent = self.agent

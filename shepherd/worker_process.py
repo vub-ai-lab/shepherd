@@ -137,7 +137,6 @@ class WorkerThread(threading.Thread):
         if self.evaluate:
             print("Evaluating policy")
             evaluate_policy(self.learner, self.env, n_eval_episodes=100000000, return_episode_rewards=False)
-
         else:
             # Run the learner
             self.learner.learn(total_timesteps=100000000, callback = self.checkpoint_callback) # TODO while true instead of fixed number timesteps

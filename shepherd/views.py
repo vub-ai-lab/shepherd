@@ -39,6 +39,7 @@ import os
 import traceback
 import uuid
 import multiprocessing
+import threading
 import random
 
 from .models import *
@@ -108,6 +109,7 @@ class AgentProcessPool:
     def __init__(self, agent):
         self.processes = []
         self.agent = agent
+        self.lock = threading.Lock()
 
         self.last_time_quota_checked = time.monotonic()
         self.meets_quota = True
@@ -115,24 +117,26 @@ class AgentProcessPool:
         self.load_spaces_from_db()
 
     def load_spaces_from_db(self):
-        self.agent.refresh_from_db()
+        with self.lock:
+            self.agent.refresh_from_db()
 
-        self.observation_space = str_to_json(self.agent.observation_space)
-        self.action_space = str_to_json(self.agent.action_space)
+            self.observation_space = str_to_json(self.agent.observation_space)
+            self.action_space = str_to_json(self.agent.action_space)
 
     def meets_cputime_quota(self):
-        if (time.monotonic() - self.last_time_quota_checked) > 60.:
-            # Checked quota more than one minute ago, re-check
-            total_percent = 0.0
+        with self.lock:
+            if (time.monotonic() - self.last_time_quota_checked) > 60.:
+                # Checked quota more than one minute ago, re-check
+                total_percent = 0.0
 
-            for p in self.processes:
-                total_percent += p["psutil"].cpu_percent()
+                for p in self.processes:
+                    total_percent += p["psutil"].cpu_percent()
 
-            self.agent.refresh_from_db()
-            self.meets_quota = (total_percent < self.agent.max_percent_cpu_usage)
-            self.last_time_quota_checked = time.monotonic()
+                self.agent.refresh_from_db()
+                self.meets_quota = (total_percent < self.agent.max_percent_cpu_usage)
+                self.last_time_quota_checked = time.monotonic()
 
-        return self.meets_quota
+            return self.meets_quota
 
     def allocate_process(self):
         """ Return a process for a new episode. It is either an existing available
@@ -182,52 +186,55 @@ class AgentProcessPool:
             case that this process has already been re-used by another session, in
             which case a new process has to be allocated for this session.
         """
-        if id >= len(self.processes):
-            # Processes got cleared, need to create a new one
-            p = self.allocate_process()
-        else:
-            p = self.processes[id]
+        with self.lock:
+            if id >= len(self.processes):
+                # Processes got cleared, need to create a new one
+                p = self.allocate_process()
+            else:
+                p = self.processes[id]
 
-        if (p["owner_session"] is not None) and (p["owner_session"] != session_key):
-            # The thread has been given to another session, get another one
-            p = self.allocate_process()
+            if (p["owner_session"] is not None) and (p["owner_session"] != session_key):
+                # The thread has been given to another session, get another one
+                p = self.allocate_process()
 
-        p["available"] = False
-        p["owner_session"] = session_key
+            p["available"] = False
+            p["owner_session"] = session_key
 
-        return p
+            return p
 
     def cleanup_processes(self):
         """ Explore the processes and remove those that have not seen any recent activity.
         """
-        i = 0
-        current_time = time.monotonic()
+        with self.lock:
+            i = 0
+            current_time = time.monotonic()
 
-        while i < len(self.processes):
-            p = self.processes[i]
+            while i < len(self.processes):
+                p = self.processes[i]
 
-            if (current_time - p["last_activity_time"]) > 30*60:
-                # No activity since 30 minutes
-                p["queues"]["adv_obs"].put(None)
-                p["process"].join()
+                if (current_time - p["last_activity_time"]) > 30*60:
+                    # No activity since 30 minutes
+                    p["queues"]["adv_obs"].put(None)
+                    p["process"].join()
 
-                del self.processes[i]
-            else:
-                i += 1
+                    del self.processes[i]
+                else:
+                    i += 1
 
     def kill_processes(self):
         """ Kill all the processes in this pool, useful when the Agent object has changed in the database.
         """
-        for p in self.processes:
-            p["queues"]["adv_obs"].put(None)
+        with self.lock:
+            for p in self.processes:
+                p["queues"]["adv_obs"].put(None)
 
-        for p in self.processes:
-            p["process"].join()
+            for p in self.processes:
+                p["process"].join()
 
-        self.processes.clear()
+            self.processes.clear()
 
-        # Reload the agent
-        self.load_spaces_from_db()
+            # Reload the agent
+            self.load_spaces_from_db()
 
     def produce_advice_from_other_processes(self, obs, current_process):
         """ Ask all the threads to produce an advice vector for observation obs
@@ -258,8 +265,6 @@ class AgentProcessPool:
         p = random.choice(processes)
         advice = self.get_advice_from_process(p, obs)
 
-        print('got advice with shape', advice)
-
         return advice
 
     def get_advice_from_process(self, p, obs):
@@ -271,37 +276,39 @@ class AgentProcessPool:
     def get_action_from_process(self, p, obs, reward, done, info):
         """ Send an experience to a process and get an action from it
         """
-        # Update the last activity time of the agent
-        self.agent.last_activity_time = timezone.now()
-        self.agent.save()
+        with self.lock:
+            if (time.monotonic() - p["last_activity_time"]) > 20:
+                # Save last activity time every 20 seconds at most
+                self.agent.last_activity_time = timezone.now()
+                self.agent.save()
 
-        # Make a dictionary observation
-        if not isinstance(obs, dict):
-            # Single-observation environment, force it to be a dictionary to match ShepherdEnv
-            obs = {"obs": obs}   # See shepherdEnv.py for keys
+            # Make a dictionary observation
+            if not isinstance(obs, dict):
+                # Single-observation environment, force it to be a dictionary to match ShepherdEnv
+                obs = {"obs": obs}   # See shepherdEnv.py for keys
 
-        # Add advice to the state
-        obs["advice"] = self.produce_advice_from_other_processes(obs, p)
+            # Add advice to the state
+            obs["advice"] = self.produce_advice_from_other_processes(obs, p)
 
-        # Send to the process and receive the action
-        p["last_activity_time"] = time.monotonic()
-        p["queues"]["act_obs"].put((obs, reward, done, info))
-        response = p["queues"]["act_rsp"].get()
+            # Send to the process and receive the action
+            p["last_activity_time"] = time.monotonic()
+            p["queues"]["act_obs"].put((obs, reward, done, info))
+            response = p["queues"]["act_rsp"].get()
 
-        assert done == ("return" in response)
+            assert done == ("return" in response)
 
-        if done:
-            # The episode finished. Log it, then mark the process as available
-            log_entry = EpisodeReturn()
-            log_entry.agent = self.agent
-            log_entry.ret = response["return"]
-            log_entry.save()
+            if done:
+                # The episode finished. Log it, then mark the process as available
+                log_entry = EpisodeReturn()
+                log_entry.agent = self.agent
+                log_entry.ret = response["return"]
+                log_entry.save()
 
-            # Reset cumulative_reward for the next episode
-            p["available"] = True
-            p["owner_session"] = None
+                # Reset cumulative_reward for the next episode
+                p["available"] = True
+                p["owner_session"] = None
 
-        return response["action"]
+            return response["action"]
 
 def shepherd_wrap(view):
     """ This is what allows a Shepherd server to answer JSON queries from Javascript pages on different servers.
